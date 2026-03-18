@@ -12,21 +12,25 @@ SDOptimizer addresses this by acting as a bridge between Powersim models (`.sip`
 
 ## 🧠 How It Works
 
-1. The user uploads a `.sip` file through the web interface
-2. The backend reads and parses the model using **VenPy** as an interoperability bridge
-3. A **Gymnasium-compatible environment** is constructed from the model's variables and logic
-4. A **Reinforcement Learning agent** (PPO or SAC) iterates over the simulation, adjusting input parameters to maximize or minimize a user-defined objective function
-5. Results are returned comparing the original simulation vs. the optimized configuration
+1. The user uploads a `.mdl` file through the web interface
+2. The file passes through a rigorous validation pipeline (size, format, injection patterns)
+3. The backend reads and parses the model extracting variables and logic
+4. A **Gymnasium-compatible environment** is constructed from the model
+5. A **Reinforcement Learning agent** (PPO or SAC) iterates over the simulation, adjusting input parameters to maximize or minimize a user-defined objective function
+6. Results are returned comparing the original simulation vs. the optimized configuration
 
 ## 🏗️ Project Structure
 
 ```
 app/
 ├── api/
+│   ├── dependencies/     # Dependency injection
 │   └── routers/          # REST API endpoints
 ├── config/               # App settings (pydantic-settings)
 ├── core/
 │   ├── constants/        # Shared constants
+│   ├── operations/       # Business logic
+│   ├── validation/       # Validation logic
 │   └── utils/            # Helper functions
 ├── exceptions/           # Custom exception classes
 ├── lifespan/             # Startup / shutdown events
