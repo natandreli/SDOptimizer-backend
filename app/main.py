@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import router as root_router
+from app.api.routers.models import router as models_router
 from app.config import settings
 from app.lifespan import lifespan
 from app.middleware import SessionMiddleware
@@ -25,3 +26,4 @@ app.add_middleware(
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
 app.include_router(root_router)
+app.include_router(models_router)
