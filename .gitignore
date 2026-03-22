@@ -6,3 +6,5 @@ __pycache__/
 *$py.class
 .ruff_cache/
 .env
+temp/
+*.log
