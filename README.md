@@ -30,6 +30,7 @@ app/
 ├── core/
 │   ├── constants/        # Shared constants
 │   ├── operations/       # Business logic
+│   ├── readers/          # Model readers/parsers (e.g., PySD)
 │   ├── validation/       # Validation logic
 │   └── utils/            # Helper functions
 ├── exceptions/           # Custom exception classes
