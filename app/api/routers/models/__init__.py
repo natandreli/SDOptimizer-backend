@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 
 from app.api.dependencies.file_validation import validate_mdl_file
 from app.api.routers.models.response_schemas import UploadModelResponse
+from app.api.routers.models.simulation import router as simulation_router
 from app.core.operations.models import upload_mdl_file
 from app.exceptions import FileValidationError, ModelParseException
 
@@ -9,6 +10,9 @@ router = APIRouter(
     prefix="/models",
     tags=["Models"],
 )
+
+# Include simulation sub-router
+router.include_router(simulation_router)
 
 
 @router.post(
