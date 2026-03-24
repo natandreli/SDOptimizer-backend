@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -173,6 +174,28 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
         model_id=model_id,
         model=model,
     )
+
+
+def delete_model(model_id: str, session_id: str) -> None:
+    """
+    Delete a user-generated model directory.
+
+    Args:
+        model_id: The unique ID of the model to delete.
+        session_id: The current session ID for locating the model.
+
+    Raises:
+        ModelParseException: If the model cannot be found.
+    """
+    model_dir = settings.TEMP_DIR / session_id / "uploads" / model_id
+
+    if not model_dir.exists() or not model_dir.is_dir():
+        raise ModelParseException(
+            filename=model_id,
+            reason="Model not found. Cannot delete.",
+        )
+
+    shutil.rmtree(model_dir)
 
 
 async def simulate_model(
