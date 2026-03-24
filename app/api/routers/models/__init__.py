@@ -6,7 +6,12 @@ from app.api.routers.models.response_schemas import (
     SimulationResponse,
     UploadModelResponse,
 )
-from app.core.operations.models import get_all_models, simulate_model, upload_mdl_file
+from app.core.operations.models import (
+    delete_model,
+    get_all_models,
+    simulate_model,
+    upload_mdl_file,
+)
 from app.exceptions import FileValidationError, ModelParseException, SimulationException
 from app.schemas.simulation import SimulationConfigSchema
 
@@ -57,6 +62,28 @@ async def handle_upload_mdl_file(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error uploading file: {str(e)}",
+        )
+
+
+@router.delete(
+    "/{model_id}",
+    description="Delete a user-generated model.",
+    status_code=204,
+)
+def handle_delete_model(model_id: str, request: Request):
+    try:
+        session_id = request.state.session_id
+        delete_model(model_id, session_id=session_id)
+        return None
+    except ModelParseException as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{e.filename}' not found: {e.reason}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete model: {str(e)}",
         )
 
 
