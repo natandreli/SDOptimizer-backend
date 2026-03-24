@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 
 from app.api.dependencies.file_validation import validate_mdl_file
 from app.api.routers.models.response_schemas import (
+    GetModelResponse,
     SimulationResponse,
     UploadModelResponse,
 )
-from app.core.operations.models import simulate_model, upload_mdl_file
+from app.core.operations.models import get_all_models, simulate_model, upload_mdl_file
 from app.exceptions import FileValidationError, ModelParseException, SimulationException
 from app.schemas.simulation import SimulationConfigSchema
 
@@ -13,6 +14,22 @@ router = APIRouter(
     prefix="/models",
     tags=["Models"],
 )
+
+
+@router.get(
+    "/all",
+    description="Get a list of all uploaded models for the current session.",
+    response_model=list[GetModelResponse],
+)
+async def handle_get_all_models(request: Request):
+    try:
+        session_id = request.state.session_id
+        return await get_all_models(session_id=session_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error retrieving models: {str(e)}",
+        )
 
 
 @router.post(
@@ -33,7 +50,7 @@ async def handle_upload_mdl_file(
         )
     except ModelParseException as e:
         raise HTTPException(
-            status_code=400,
+            status_code=422,
             detail=f"Failed to parse '{e.filename}': {e.reason}",
         )
     except Exception as e:
