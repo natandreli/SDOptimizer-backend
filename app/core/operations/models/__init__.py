@@ -70,8 +70,6 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
         auxiliaries=[ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries],
     )
 
-
-
     validation = ValidationResultSchema(
         is_valid=True,
         format="mdl",

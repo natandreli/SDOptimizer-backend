@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SimulationConfigSchema(BaseModel):
-    """Configuration for running a simulation."""
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "dt": 0.25,
+                    "total_time": 100.0,
+                    "parameter_overrides": {"cash revenue": 1500.0},
+                }
+            ]
+        }
+    )
 
     dt: float = Field(
         default=0.25,
@@ -28,7 +38,30 @@ class SimulationConfigSchema(BaseModel):
 
 
 class SimulationResultSchema(BaseModel):
-    """Result of a simulation run."""
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "time_series": {"Variable 1": [10.0, 11.0, 12.0]},
+                    "summary_stats": {
+                        "Variable 1": {
+                            "mean": 11.0,
+                            "min": 10.0,
+                            "max": 12.0,
+                            "initial": 10.0,
+                            "final": 12.0,
+                        }
+                    },
+                    "steps_executed": 401,
+                    "config": {
+                        "dt": 0.25,
+                        "total_time": 100.0,
+                        "parameter_overrides": {},
+                    },
+                }
+            ]
+        }
+    )
 
     time_series: Dict[str, List[float]] = Field(
         description="Time-series data for each variable. Keys are variable names.",

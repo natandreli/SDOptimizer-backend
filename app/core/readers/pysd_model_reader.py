@@ -152,11 +152,14 @@ class PySDModelReader:
             try:
                 integ_obj = getattr(component_module, integ_name)
                 import inspect
+
                 eq_str = inspect.getsource(integ_obj.ddt)
             except Exception:
                 eq_str = info.raw_equations.get(stock_var.name, stock_var.equation)
 
-            inflows, outflows = self._parse_stock_flows(eq_str, flow_real_names, py_to_real)
+            inflows, outflows = self._parse_stock_flows(
+                eq_str, flow_real_names, py_to_real
+            )
             stock_var.inflows = inflows
             stock_var.outflows = outflows
 
