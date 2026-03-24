@@ -12,12 +12,9 @@ FallbackFn = Callable[..., Any]
 
 
 class PySDFunctionPatcher:
- 
-
     _registry: dict[str, FallbackFn] = {}
     _original_fn: Callable[..., Any] | None = None
     _applied: bool = False
-
 
     @staticmethod
     def _fallback_reinitial(*args: Any) -> Any:
