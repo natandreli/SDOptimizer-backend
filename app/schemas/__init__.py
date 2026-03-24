@@ -1,5 +1,5 @@
 from app.schemas.models import (
-    ModelInformationSchema,
+    ModelSchema,
     ModelVariableSchema,
 )
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
@@ -7,7 +7,7 @@ from app.schemas.validations import ValidationResultSchema
 
 __all__ = [
     "ModelVariableSchema",
-    "ModelInformationSchema",
+    "ModelSchema",
     "SimulationConfigSchema",
     "SimulationResultSchema",
     "ValidationResultSchema",
