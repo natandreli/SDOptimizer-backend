@@ -7,6 +7,8 @@ from typing import Any
 
 import pysd
 
+from app.core.patching import PySDFunctionPatcher
+
 from app.schemas.models import ModelInformationSchema, ModelVariableSchema
 
 
@@ -52,6 +54,8 @@ class PySDModelReader:
         Raises:
             Exception: If PySD fails to parse the file
         """
+        PySDFunctionPatcher.apply()
+
         # Load model using PySD
         model = pysd.read_vensim(str(self.filepath))
 
