@@ -41,6 +41,15 @@ class PySDModelReader:
         if not self.filepath.exists():
             raise FileNotFoundError(f"File not found: {self.filepath}")
 
+    def load(self) -> pysd.PySD:
+        """
+        Load .mdl file and return the PySD model object directly for simulation.
+
+        Returns:
+            pysd.PySD: The loaded PySD model.
+        """
+        return pysd.read_vensim(str(self.filepath))
+
     def read(self) -> ModelInformationSchema:
         """
         Parse .mdl file and extract model structure.
@@ -128,6 +137,36 @@ class PySDModelReader:
 
             info.raw_equations[real_name] = definition or ""
 
+        # Post-process stocks to identify inflows and outflows
+        py_to_real = {}
+        real_to_py = {}
+        for _, row in doc.iterrows():
+            rn = str(row.get("Real Name", "")).strip()
+            pn = str(row.get("Py Name", "")).strip()
+            if rn and pn:
+                py_to_real[pn] = rn
+                real_to_py[rn] = pn
+
+        flow_real_names = {py_to_real.get(pn, pn) for pn in flow_py_names}
+
+        for stock_var in info.stocks:
+            py_name = real_to_py.get(stock_var.name, "")
+            integ_name = f"_integ_{py_name}"
+            # Para PySD, la ecuación real del stock está dentro de la propiedad ddt de su Integ
+            try:
+                integ_obj = getattr(component_module, integ_name)
+                import inspect
+
+                eq_str = inspect.getsource(integ_obj.ddt)
+            except Exception:
+                eq_str = info.raw_equations.get(stock_var.name, stock_var.equation)
+
+            inflows, outflows = self._parse_stock_flows(
+                eq_str, flow_real_names, py_to_real
+            )
+            stock_var.inflows = inflows
+            stock_var.outflows = outflows
+
         info.metadata["detected_flow_count"] = len(flow_py_names)
 
         return info
@@ -212,3 +251,46 @@ class PySDModelReader:
         if py_name in flow_py_names:
             return "flow"
         return "auxiliary"
+
+    @staticmethod
+    def _parse_stock_flows(
+        equation_str: str,
+        flow_real_names: set[str],
+        py_to_real: dict[str, str],
+    ) -> tuple[list[str], list[str]]:
+        """
+        Parse a stock's equation to identify inflows and outflows.
+        """
+        if not equation_str:
+            return [], []
+
+        inflows: list[str] = []
+        outflows: list[str] = []
+
+        tokens = re.split(r"(\s*[+\-]\s*)", equation_str)
+
+        sign = "+"
+        for token in tokens:
+            stripped = token.strip()
+            if stripped in ("+", "-"):
+                sign = stripped
+                continue
+            if not stripped:
+                continue
+
+            func_calls = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\(\)", stripped)
+            bare_names = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", stripped)
+
+            for name in func_calls + bare_names:
+                real_name = py_to_real.get(name, name)
+                if real_name in flow_real_names:
+                    if sign == "-":
+                        outflows.append(real_name)
+                    else:
+                        inflows.append(real_name)
+
+        # Deduplicate while preserving order
+        inflows = list(dict.fromkeys(inflows))
+        outflows = list(dict.fromkeys(outflows))
+
+        return inflows, outflows

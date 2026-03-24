@@ -10,6 +10,8 @@ class ModelVariableSchema(BaseModel):
     unit: str = ""
     initial_value: Optional[float] = None
     description: str = ""
+    inflows: List[str] = Field(default_factory=list)
+    outflows: List[str] = Field(default_factory=list)
 
 
 class ModelInformationSchema(BaseModel):

@@ -14,3 +14,11 @@ class ModelParseException(Exception):
         self.filename = filename
         self.reason = reason
         super().__init__(f"Failed to parse '{filename}': {reason}")
+
+
+class SimulationException(Exception):
+    """Raised when a simulation fails to execute."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"Simulation failed: {reason}")
