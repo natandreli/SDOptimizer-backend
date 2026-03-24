@@ -8,8 +8,7 @@ from typing import Any
 import pysd
 
 from app.core.patching import PySDFunctionPatcher
-
-from app.schemas.models import ModelInformationSchema, ModelVariableSchema
+from app.schemas.models import ModelSchema, ModelVariableSchema
 
 
 class PySDModelReader:
@@ -21,7 +20,7 @@ class PySDModelReader:
 
     Features:
     - Official Vensim parser (no fragile regex)
-    - Extracts variables with full metadata
+    - Extracts model variables
     - Automatic classification (stock/flow/parameter/auxiliary)
     - Dependency graph generation
     - Low-level model compilation (LIM)
@@ -50,15 +49,15 @@ class PySDModelReader:
         """
         return pysd.read_vensim(str(self.filepath))
 
-    def read(self) -> ModelInformationSchema:
+    def read(self) -> ModelSchema:
         """
         Parse .mdl file and extract model structure.
 
         Uses PySD to load and parse the model. Converts internal PySD
-        representation to ModelInformationSchema for API compatibility.
+        representation to ModelSchema for API compatibility.
 
         Returns:
-            ModelInformationSchema: Container with all model variables
+            ModelSchema: Container with all model variables
 
         Raises:
             Exception: If PySD fails to parse the file
@@ -69,13 +68,9 @@ class PySDModelReader:
         model = pysd.read_vensim(str(self.filepath))
 
         # Initialize schema
-        info = ModelInformationSchema(
-            source_file=str(self.filepath),
+        info = ModelSchema(
+            file_name=self.filepath.name,
             format="mdl",
-            metadata={
-                "parser": "pysd",
-                "pysd_version": pysd.__version__,
-            },
         )
 
         doc = model.doc
@@ -166,8 +161,6 @@ class PySDModelReader:
             )
             stock_var.inflows = inflows
             stock_var.outflows = outflows
-
-        info.metadata["detected_flow_count"] = len(flow_py_names)
 
         return info
 
