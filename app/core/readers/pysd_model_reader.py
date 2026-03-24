@@ -54,7 +54,6 @@ class PySDModelReader:
         Raises:
             Exception: If PySD fails to parse the file
         """
-        # Patch unsupported Vensim functions before loading
         PySDFunctionPatcher.apply()
 
         # Load model using PySD
