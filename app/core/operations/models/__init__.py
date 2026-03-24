@@ -1,19 +1,107 @@
 from __future__ import annotations
 
+import tempfile
 import uuid
-from typing import TYPE_CHECKING
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import UploadFile
 
+from app.api.routers.models.response_schemas import (
+    GetModelResponse,
+    UploadModelResponse,
+)
 from app.config import settings
 from app.core.readers.pysd_model_reader import PySDModelReader
+from app.core.simulator.pysd_simulator import PySDSimulator
 from app.exceptions import ModelParseException, SimulationException
-from app.schemas.models import ModelInformationSchema, ModelVariableSchema
+from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
-from app.schemas.validations import ValidationResultSchema
 
-if TYPE_CHECKING:
-    from app.api.routers.models.response_schemas import UploadModelResponse
+
+def _get_models_dir(session_id: str | None) -> Path:
+    """
+    Get the directory for a specific session.
+
+    Args:
+        session_id: Session identifier to organize uploaded models. If None, returns a default directory.
+
+    Returns:
+        Path: Directory path for the session's models
+    """
+    if session_id:
+        return settings.TEMP_DIR / session_id / "uploads"
+    return settings.TEMP_DIR / "default" / "uploads"
+
+
+async def get_all_models(session_id: str) -> list[GetModelResponse]:
+    """
+    Retrieve all uploaded models for the current session.
+
+    Args:
+        session_id: The current session ID.
+
+    Returns:
+        list[GetModelResponse]: A list of uploaded models for the session.
+    """
+    uploads_dir = _get_models_dir(session_id)
+    if not uploads_dir.exists():
+        return []
+
+    models: list[GetModelResponse] = []
+    seen_file_names: set[str] = set()
+
+    for model_dir in sorted(
+        (p for p in uploads_dir.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
+        mdl_files = list(model_dir.glob("*.mdl"))
+        if not mdl_files:
+            continue
+
+        file_path = mdl_files[0]
+        if file_path.name in seen_file_names:
+            continue
+        seen_file_names.add(file_path.name)
+
+        try:
+            reader = PySDModelReader(file_path)
+            info = reader.read()
+
+            model = ModelSchema(
+                file_name=file_path.name,
+                uploaded_at=datetime.fromtimestamp(
+                    file_path.stat().st_mtime,
+                    tz=timezone.utc,
+                ).isoformat(),
+                parsed_with="pysd",
+                format=info.format,
+                stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
+                flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
+                parameters=[
+                    ModelVariableSchema(**v.model_dump()) for v in info.parameters
+                ],
+                auxiliaries=[
+                    ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries
+                ],
+            )
+
+            models.append(
+                GetModelResponse(
+                    model_id=model_dir.name,
+                    model=model,
+                )
+            )
+        except Exception:
+            models.append(
+                GetModelResponse(
+                    model_id=model_dir.name,
+                    model=None,
+                )
+            )
+
+    return models
 
 
 async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelResponse:
@@ -35,34 +123,45 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
         ModelParseException: If the file cannot be parsed.
     """
     model_id = uuid.uuid4().hex[:12]
+    uploads_dir = settings.TEMP_DIR / session_id / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if same filename was already uploaded — reuse existing model_id
-    uploads_root = settings.TEMP_DIR / session_id / "uploads"
-    if uploads_root.exists():
-        for existing_dir in uploads_root.iterdir():
-            if existing_dir.is_dir() and (existing_dir / file.filename).exists():
-                model_id = existing_dir.name
-                break
+    if not file.filename:
+        raise ModelParseException(
+            filename="unknown",
+            reason="Missing filename.",
+        )
 
-    model_dir = uploads_root / model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
+    for existing_dir in uploads_dir.iterdir():
+        if existing_dir.is_dir() and (existing_dir / file.filename).exists():
+            model_id = existing_dir.name
+            break
 
-    file_path = model_dir / file.filename
     await file.seek(0)
     content = await file.read()
-    file_path.write_bytes(content)
 
     try:
-        reader = PySDModelReader(file_path)
-        info = reader.read()
+        with tempfile.TemporaryDirectory(prefix="sdoptimizer-parse-") as tmp_dir:
+            parse_tmp_file = Path(tmp_dir) / file.filename
+            parse_tmp_file.write_bytes(content)
+            reader = PySDModelReader(parse_tmp_file)
+            info = reader.read()
     except Exception as e:
         raise ModelParseException(
-            filename=file.filename or "unknown",
+            filename=file.filename,
             reason=str(e),
         )
 
-    model_info = ModelInformationSchema(
-        source_file=info.source_file,
+    model_dir = uploads_dir / model_id
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = model_dir / file.filename
+    file_path.write_bytes(content)
+
+    model = ModelSchema(
+        file_name=file.filename,
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+        parsed_with="pysd",
         format=info.format,
         stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
         flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
@@ -70,20 +169,9 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
         auxiliaries=[ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries],
     )
 
-    validation = ValidationResultSchema(
-        is_valid=True,
-        format="mdl",
-        checks_passed=["File validation passed", "Model parsed successfully"],
-        metadata={"parser": "pysd"},
-    )
-
-    # Lazy import to avoid circular dependency with routers
-    from app.api.routers.models.response_schemas import UploadModelResponse
-
     return UploadModelResponse(
         model_id=model_id,
-        validation=validation,
-        model_info=model_info,
+        model=model,
     )
 
 
@@ -138,9 +226,6 @@ async def simulate_model(
         )
 
     try:
-        # Lazy import to avoid circular dependency with routers
-        from app.core.simulator.pysd_simulator import PySDSimulator
-
         simulator = PySDSimulator(pysd_model, config)
         result = simulator.simulate()
     except SimulationException:
