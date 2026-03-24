@@ -3,16 +3,19 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.schemas import (
-    ModelInformationSchema,
+    ModelSchema,
     SimulationResultSchema,
-    ValidationResultSchema,
 )
 
 
 class UploadModelResponse(BaseModel):
     model_id: str
-    validation: ValidationResultSchema
-    model_info: Optional[ModelInformationSchema] = None
+    model: Optional[ModelSchema] = None
+
+
+class GetModelResponse(BaseModel):
+    model_id: str
+    model: Optional[ModelSchema] = None
 
 
 class SimulationResponse(BaseModel):
