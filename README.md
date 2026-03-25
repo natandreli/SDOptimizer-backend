@@ -105,6 +105,12 @@ Once the server is running, visit:
 - `GET /api/healthcheck` — Basic liveness check
 - `GET /api/health` — Service health status
 
+### Models
+- `GET /api/models/all` — List uploaded models for the current session
+- `POST /api/models/upload/mdl` — Upload and parse a `.mdl` model
+- `DELETE /api/models/{model_id}` — Delete a model by ID
+- `POST /api/models/{model_id}/simulate` — Run a simulation for an uploaded model
+
 > More endpoints will be added as the project evolves.
 
 ## 🧪 Development
