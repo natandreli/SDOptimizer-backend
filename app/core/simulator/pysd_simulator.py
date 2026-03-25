@@ -35,19 +35,65 @@ class PySDSimulator:
         )
         time_series = {col: df[col].tolist() for col in df.columns}
         time_list = df.index.tolist()
-        if "Time" not in time_series:
-            time_series["Time"] = time_list
-        if "time" not in time_series:
-            time_series["time"] = time_list
+        time_series.pop("Time", None)
+        time_series["time"] = time_list
 
-        summary_stats = self._compute_summary_stats(time_series)
+        parameter_names = self._get_parameter_names()
+        parameter_series = {
+            name: values
+            for name, values in time_series.items()
+            if name in parameter_names and not self._is_control_variable(name)
+        }
+        variable_series = {
+            name: values
+            for name, values in time_series.items()
+            if name not in parameter_names and not self._is_control_variable(name)
+        }
+        summary_series = {
+            name: values for name, values in time_series.items() if name != "time"
+        }
+        summary_stats = self._compute_summary_stats(summary_series)
 
         return SimulationResultSchema(
-            time_series=time_series,
+            time_series=variable_series,
+            parameter_series=parameter_series,
             summary_stats=summary_stats,
             steps_executed=len(return_timestamps),
             config=self.config,
         )
+
+    def _get_parameter_names(self) -> set[str]:
+        """Return parameter (constant) names from model documentation."""
+        parameter_names: set[str] = set()
+        try:
+            doc = self.model.doc
+            if doc is None or doc.empty:
+                return parameter_names
+
+            for _, row in doc.iterrows():
+                element_type = str(row.get("Type", "")).strip().lower()
+                if element_type == "constant":
+                    real_name = str(row.get("Real Name", "")).strip()
+                    py_name = str(row.get("Py Name", "")).strip()
+                    if real_name:
+                        parameter_names.add(real_name)
+                    if py_name:
+                        parameter_names.add(py_name)
+        except Exception:
+            return set()
+
+        return parameter_names
+
+    @staticmethod
+    def _is_control_variable(name: str) -> bool:
+        normalized = " ".join(name.strip().lower().replace("_", " ").split())
+        return normalized in {
+            "time",
+            "saveper",
+            "time step",
+            "initial time",
+            "final time",
+        }
 
     @staticmethod
     def _compute_summary_stats(

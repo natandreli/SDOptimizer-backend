@@ -43,6 +43,7 @@ class SimulationResultSchema(BaseModel):
             "examples": [
                 {
                     "time_series": {"Variable 1": [10.0, 11.0, 12.0]},
+                    "parameter_series": {"Param 1": [0.5, 0.5, 0.5]},
                     "summary_stats": {
                         "Variable 1": {
                             "mean": 11.0,
@@ -64,7 +65,16 @@ class SimulationResultSchema(BaseModel):
     )
 
     time_series: Dict[str, List[float]] = Field(
-        description="Time-series data for each variable. Keys are variable names.",
+        description=(
+            "Time-series data for model variables (excluding parameters). "
+            "Keys are variable names."
+        ),
+    )
+    parameter_series: Dict[str, List[float]] = Field(
+        default_factory=dict,
+        description=(
+            "Time-series data for model parameters/constants. Keys are parameter names."
+        ),
     )
     summary_stats: Dict[str, Dict[str, float]] = Field(
         description=(
