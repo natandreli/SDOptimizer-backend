@@ -58,11 +58,13 @@ async def handle_upload_mdl_file(
             status_code=422,
             detail=f"Failed to parse '{e.filename}': {e.reason}",
         )
+    
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error uploading file: {str(e)}",
         )
+    
 
 
 @router.delete(
