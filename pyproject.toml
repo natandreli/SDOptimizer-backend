@@ -12,6 +12,7 @@ dependencies = [
     "python-multipart>=0.0.22",
     "pysd>=3.13.0",
     "uvicorn>=0.41.0",
+    "numpy>=2.1.0"
 ]
 
 [dependency-groups]
