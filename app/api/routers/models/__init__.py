@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from app.api.dependencies.file_validation import validate_mdl_file
 from app.api.routers.models.response_schemas import (
     GetModelResponse,
+    OptimizationResponse,
     SimulationResponse,
     UploadModelResponse,
 )
@@ -14,7 +15,7 @@ from app.core.operations.models import (
     upload_mdl_file,
 )
 from app.exceptions import FileValidationError, ModelParseException, SimulationException
-from app.schemas.optimizer import OptimizationConfigSchema, OptimizationResponse
+from app.schemas.optimizer import OptimizationConfigSchema
 from app.schemas.simulation import SimulationConfigSchema
 
 router = APIRouter(
@@ -31,6 +32,7 @@ router = APIRouter(
 async def handle_get_all_models(request: Request):
     try:
         session_id = request.state.session_id
+        print(f"Retrieving models for session: {session_id}")
         return await get_all_models(session_id=session_id)
     except Exception as e:
         raise HTTPException(

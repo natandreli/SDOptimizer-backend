@@ -4,7 +4,7 @@ from typing import Tuple
 import numpy as np
 
 
-class EGreedyBanditAgent:
+class EGreedyAgent:
     """
     ε-greedy multi-armed bandit agent.
 

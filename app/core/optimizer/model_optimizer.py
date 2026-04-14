@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
-from ..agent.e_greedy_agent import EGreedyBanditAgent
+from ..agent.e_greedy_agent import EGreedyAgent
 
 ACTION_DIRECTIONS = [1, -1, 0]
 
@@ -20,7 +20,7 @@ class ModelOptimizer:
         initial_values: List[float],
         bounds: List[Tuple[float, float]],
         rho_factors: List[float],
-        agent: EGreedyBanditAgent,
+        agent: EGreedyAgent,
         objective_fn: Callable,
         max_runs: int = 500,
     ) -> None:

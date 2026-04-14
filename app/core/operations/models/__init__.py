@@ -10,19 +10,20 @@ from fastapi import UploadFile
 
 from app.api.routers.models.response_schemas import (
     GetModelResponse,
+    OptimizationResponse,
     UploadModelResponse,
 )
 from app.config import settings
-from app.core.agent.e_greedy_agent import EGreedytAgent
+from app.core.agent.e_greedy_agent import EGreedyAgent
 from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
 from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
+from app.core.utils.model_loader import load_model
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.optimizer import (
     OptimizationHistorySchema,
-    OptimizationResponse,
     OptimizationResultSchema,
 )
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
@@ -327,7 +328,7 @@ async def optimize_model(
 
     action_shape = (3,) * len(config.parameter_names)
 
-    agent = EGreedytAgent(
+    agent = EGreedyAgent(
         action_shape=action_shape,
         epsilon=config.epsilon,
     )
