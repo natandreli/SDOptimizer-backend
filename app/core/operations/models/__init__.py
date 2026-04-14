@@ -13,10 +13,17 @@ from app.api.routers.models.response_schemas import (
     UploadModelResponse,
 )
 from app.config import settings
+from app.core.agent.e_greedy_agent import EGreedytAgent
+from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
+from app.schemas.optimizer import (
+    OptimizationHistorySchema,
+    OptimizationResponse,
+    OptimizationResultSchema,
+)
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
 
 
@@ -229,7 +236,6 @@ async def simulate_model(
             reason="Model not found. Upload a model first.",
         )
 
-    # Find the .mdl file inside the model directory
     mdl_files = list(model_dir.glob("*.mdl"))
     if not mdl_files:
         raise ModelParseException(
@@ -257,3 +263,74 @@ async def simulate_model(
         raise SimulationException(reason=str(e))
 
     return result
+
+
+async def optimize_model(
+    session_id: str, model_id: str, config
+) -> OptimizationResponse:
+    """
+    Execute ε-greedy multi-armed bandit optimization over a PySD model.
+
+    Args:
+        session_id: Unique session identifier used for isolating user data.
+        model_id: Identifier of the uploaded model to optimize.
+        config: Optimization configuration object
+
+    returns: Dictionary containing best parameters, best score, and optimization history.
+
+    Raises:
+        ModelParseException: If the model cannot be loaded.
+        ValueError: If configuration or objective function is invalid.
+        SimulationException: If simulation execution fails.
+    """
+
+    model_path, parameters = load_model(session_id, model_id)
+
+    wrapper = PySDParser(
+        model_path=model_path,
+        parameters=parameters,
+    )
+
+    def objective_fn(df):
+        if config.target_variable not in df.columns:
+            raise ValueError(
+                f"Variable '{config.target_variable}' not found in simulation results."
+            )
+
+        if config.statistic == "final":
+            return float(df[config.target_variable].iloc[-1])
+        elif config.statistic == "mean":
+            return float(df[config.target_variable].mean())
+        elif config.statistic == "max":
+            return float(df[config.target_variable].max())
+        else:
+            raise ValueError(f"Unknown statistic: {config.statistic}")
+
+    action_shape = (3,) * len(config.parameter_names)
+
+    agent = EGreedytAgent(
+        action_shape=action_shape,
+        epsilon=config.epsilon,
+    )
+
+    optimizer = ModelOptimizer(
+        wrapper=wrapper,
+        parameter_names=config.parameter_names,
+        initial_values=config.initial_values,
+        bounds=config.bounds,
+        rho_factors=config.rho_factors,
+        agent=agent,
+        objective_fn=objective_fn,
+        max_runs=config.max_runs,
+    )
+
+    best_params, best_score = optimizer.optimize()
+    history = optimizer.get_history()
+
+    return OptimizationResponse(
+        result=OptimizationResultSchema(
+            best_parameters=dict(zip(config.parameter_names, best_params)),
+            best_score=best_score,
+            history=OptimizationHistorySchema(**history),
+        )
+    )

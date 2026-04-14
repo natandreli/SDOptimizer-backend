@@ -6,6 +6,7 @@ from app.schemas import (
     ModelSchema,
     SimulationResultSchema,
 )
+from app.schemas.optimizer import OptimizationResultSchema
 
 
 class UploadModelResponse(BaseModel):
@@ -19,4 +20,8 @@ class GetModelResponse(BaseModel):
 
 
 class SimulationResponse(BaseModel):
-    result: SimulationResultSchema
+    result: SimulationResultSchema = None
+
+
+class OptimizationResponse(BaseModel):
+    result: OptimizationResultSchema = None

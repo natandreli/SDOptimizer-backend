@@ -9,10 +9,12 @@ from app.api.routers.models.response_schemas import (
 from app.core.operations.models import (
     delete_model,
     get_all_models,
+    optimize_model,
     simulate_model,
     upload_mdl_file,
 )
 from app.exceptions import FileValidationError, ModelParseException, SimulationException
+from app.schemas.optimizer import OptimizationConfigSchema, OptimizationResponse
 from app.schemas.simulation import SimulationConfigSchema
 
 router = APIRouter(
@@ -123,4 +125,42 @@ async def handle_simulate(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error during simulation: {str(e)}",
+        )
+
+
+@router.post(
+    "/{model_id}/optimize",
+    response_model=OptimizationResponse,
+    description=(
+        "Run Q-learning optimization on a previously uploaded model. "
+        "The optimizer adjusts model parameters to maximize a given objective function."
+    ),
+)
+async def handle_optimize(
+    request: Request,
+    model_id: str,
+    config: OptimizationConfigSchema,
+):
+    try:
+        result = await optimize_model(
+            session_id=request.state.session_id,
+            model_id=model_id,
+            config=config,
+        )
+        return OptimizationResponse(result=result)
+
+    except ModelParseException as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model error: {e.reason}",
+        )
+    except SimulationException as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Optimization failed: {e.reason}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error during optimization: {str(e)}",
         )
