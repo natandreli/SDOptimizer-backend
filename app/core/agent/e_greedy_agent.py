@@ -1,6 +1,7 @@
-import numpy as np
 import random
 from typing import Tuple
+
+import numpy as np
 
 
 class EGreedyBanditAgent:
@@ -43,10 +44,7 @@ class EGreedyBanditAgent:
             idx = candidates[random.randint(0, len(candidates) - 1)]
             return tuple(idx)
         else:
-            return tuple(
-                random.randint(0, dim - 1)
-                for dim in self.q_table.shape
-            )
+            return tuple(random.randint(0, dim - 1) for dim in self.q_table.shape)
 
     def update(self, action: Tuple[int, ...], reward: float) -> None:
         """

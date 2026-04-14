@@ -13,13 +13,17 @@ from app.api.routers.models.response_schemas import (
     UploadModelResponse,
 )
 from app.config import settings
+from app.core.agent.e_greedy_agent import EGreedytAgent
 from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
-from app.core.rl_agent.e_greedy_bandit_agent import EGreedyBanditAgent
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
-from app.schemas.optimizer import OptimizationHistorySchema, OptimizationResponse, OptimizationResultSchema
+from app.schemas.optimizer import (
+    OptimizationHistorySchema,
+    OptimizationResponse,
+    OptimizationResultSchema,
+)
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
 
 
@@ -260,10 +264,10 @@ async def simulate_model(
 
     return result
 
-from typing import Dict, Any
 
-
-async def optimize_model(session_id: str, model_id: str, config) -> OptimizationResponse:
+async def optimize_model(
+    session_id: str, model_id: str, config
+) -> OptimizationResponse:
     """
     Execute ε-greedy multi-armed bandit optimization over a PySD model.
 
@@ -304,11 +308,10 @@ async def optimize_model(session_id: str, model_id: str, config) -> Optimization
 
     action_shape = (3,) * len(config.parameter_names)
 
-    agent = EGreedyBanditAgent(
+    agent = EGreedytAgent(
         action_shape=action_shape,
         epsilon=config.epsilon,
     )
-
 
     optimizer = ModelOptimizer(
         wrapper=wrapper,

@@ -1,6 +1,8 @@
+from typing import Any, Callable, Dict, List, Tuple
+
 import numpy as np
-from typing import Callable, List, Tuple, Dict, Any
-from ..rl_agent.e_greedy_bandit_agent import EGreedyBanditAgent
+
+from ..agent.e_greedy_agent import EGreedyBanditAgent
 
 ACTION_DIRECTIONS = [1, -1, 0]
 
@@ -39,7 +41,9 @@ class ModelOptimizer:
             ValueError: If input dimensions are inconsistent.
         """
         if len(parameter_names) != len(initial_values):
-            raise ValueError("parameter_names and initial_values must have the same length.")
+            raise ValueError(
+                "parameter_names and initial_values must have the same length."
+            )
         if len(bounds) != len(parameter_names):
             raise ValueError("bounds must match number of parameters.")
         if len(rho_factors) != len(parameter_names):
@@ -74,7 +78,6 @@ class ModelOptimizer:
         best_params = list(self.current_parameters)
 
         for _ in range(self.max_runs):
-
             prev_params = list(self.current_parameters)
             action = self.agent.select_action()
             self._apply_action(action)
@@ -122,7 +125,7 @@ class ModelOptimizer:
         for i, action_idx in enumerate(action):
             direction = ACTION_DIRECTIONS[action_idx]
             if direction != 0:
-                self.current_parameters[i] *= (1 + direction * self.rho_factors[i])
+                self.current_parameters[i] *= 1 + direction * self.rho_factors[i]
 
     def _is_feasible(self, params: List[float]) -> bool:
         """

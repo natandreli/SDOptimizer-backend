@@ -126,7 +126,8 @@ async def handle_simulate(
             status_code=500,
             detail=f"Unexpected error during simulation: {str(e)}",
         )
-    
+
+
 @router.post(
     "/{model_id}/optimize",
     response_model=OptimizationResponse,

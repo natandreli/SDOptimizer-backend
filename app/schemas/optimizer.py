@@ -1,5 +1,7 @@
+from typing import Dict, List, Tuple
+
 from pydantic import BaseModel
-from typing import List, Tuple, Dict
+
 
 class OptimizationConfigSchema(BaseModel):
     parameter_names: List[str]
@@ -12,6 +14,7 @@ class OptimizationConfigSchema(BaseModel):
 
     target_variable: str
     statistic: str
+
 
 class OptimizationHistorySchema(BaseModel):
     rewards: List[float]
