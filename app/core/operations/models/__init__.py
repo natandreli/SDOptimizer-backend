@@ -286,7 +286,7 @@ async def optimize_model(
 
     model_path, parameters = load_model(session_id, model_id)
 
-    wrapper = PySDWrapper(
+    wrapper = PySDParser(
         model_path=model_path,
         parameters=parameters,
     )

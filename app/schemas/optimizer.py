@@ -27,7 +27,3 @@ class OptimizationResultSchema(BaseModel):
     best_parameters: Dict[str, float]
     best_score: float
     history: OptimizationHistorySchema
-
-
-class OptimizationResponse(BaseModel):
-    result: OptimizationResultSchema
