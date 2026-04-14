@@ -16,6 +16,7 @@ from app.config import settings
 from app.core.agent.e_greedy_agent import EGreedytAgent
 from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
+from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
@@ -165,6 +166,24 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
 
     file_path = model_dir / file.filename
     file_path.write_bytes(content)
+
+    try:
+        wrapper = PySDParser(
+            model_path=str(file_path),
+            parameters=[p.model_dump() for p in info.parameters],
+        )
+    except Exception as e:
+        raise ModelParseException(
+            filename=file.filename,
+            reason=f"Wrapper initialization failed: {str(e)}",
+        )
+    try:
+        _ = wrapper.run()
+    except Exception as e:
+        raise ModelParseException(
+            filename=file.filename,
+            reason=f"Model execution failed: {str(e)}",
+        )
 
     model = ModelSchema(
         file_name=file.filename,
