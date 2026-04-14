@@ -72,7 +72,7 @@ async def handle_upload_mdl_file(
 
 @router.delete(
     "/{model_id}",
-    description="Delete a user-generated model.",
+    description="Delete a model file.",
     status_code=204,
 )
 def handle_delete_model(model_id: str, request: Request):
