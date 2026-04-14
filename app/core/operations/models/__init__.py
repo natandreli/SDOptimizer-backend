@@ -13,8 +13,8 @@ from app.api.routers.models.response_schemas import (
     UploadModelResponse,
 )
 from app.config import settings
-from app.core.models.pysd_wrapper import PySDWrapper
 from app.core.readers.pysd_model_reader import PySDModelReader
+from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
@@ -161,7 +161,7 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
     file_path.write_bytes(content)
 
     try:
-        wrapper = PySDWrapper(
+        wrapper = PySDParser(
             model_path=str(file_path),
             parameters=[p.model_dump() for p in info.parameters],
         )
@@ -177,7 +177,7 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             filename=file.filename,
             reason=f"Model execution failed: {str(e)}",
         )
-    
+
     model = ModelSchema(
         file_name=file.filename,
         uploaded_at=datetime.now(timezone.utc).isoformat(),

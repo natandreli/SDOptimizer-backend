@@ -1,12 +1,13 @@
-import pysd
-import pandas as pd
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
 import numpy as np
-from typing import Dict, List, Any, Optional, Callable, Tuple
+import pandas as pd
+import pysd
 
 
-class PySDWrapper:
+class PySDParser:
     """
-    Wrapper for executing System Dynamics models using PySD and evaluating objective functions.
+    Parser for executing System Dynamics models using PySD and evaluating objective functions.
 
     This class abstracts:
     - Model loading (.mdl or .py)
@@ -49,13 +50,11 @@ class PySDWrapper:
         self.original_parameters = parameters
 
         self.params_map: Dict[str, str] = {
-            p["name"]: p["name"].replace(" ", "_")
-            for p in parameters
+            p["name"]: p["name"].replace(" ", "_") for p in parameters
         }
 
         self.initial_values: Dict[str, float] = {
-            self.params_map[p["name"]]: p["initial_value"]
-            for p in parameters
+            self.params_map[p["name"]]: p["initial_value"] for p in parameters
         }
 
         self.param_bounds: Dict[str, Tuple[Optional[float], Optional[float]]] = {
@@ -87,10 +86,9 @@ class PySDWrapper:
 
         if overrides:
             self.validate_overrides(overrides)
-            if not np.isfinite(value):
-                raise ValueError(f"'{name}' has invalid value: {value}")
-
             for name, value in overrides.items():
+                if not np.isfinite(value):
+                    raise ValueError(f"'{name}' has invalid value: {value}")
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
                 params[pysd_name] = value
 
@@ -110,7 +108,7 @@ class PySDWrapper:
 
             objective_fn: Function that takes the results DataFrame and returns
                 a scalar numeric value.
-                
+
         Returns:
             float: Scalar value computed by the objective function.
 
