@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from app.api.dependencies.file_validation import validate_mdl_file
 from app.api.routers.models.response_schemas import (
     GetModelResponse,
+    OptimizationOptionsResponse,
     OptimizationResponse,
     SimulationResponse,
     UploadModelResponse,
@@ -10,6 +11,7 @@ from app.api.routers.models.response_schemas import (
 from app.core.operations.models import (
     delete_model,
     get_all_models,
+    get_optimization_options,
     optimize_model,
     simulate_model,
     upload_mdl_file,
@@ -166,4 +168,30 @@ async def handle_optimize(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error during optimization: {str(e)}",
+        )
+
+
+@router.get(
+    "/{model_id}/optimization-options",
+    response_model=OptimizationOptionsResponse,
+    description=(
+        "Get model-specific options to build the optimization configuration form."
+    ),
+)
+def handle_get_optimization_options(request: Request, model_id: str):
+    try:
+        options = get_optimization_options(
+            session_id=request.state.session_id,
+            model_id=model_id,
+        )
+        return OptimizationOptionsResponse(options=options)
+    except ModelParseException as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model error: {e.reason}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error retrieving optimization options: {str(e)}",
         )
