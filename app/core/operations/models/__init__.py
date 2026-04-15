@@ -10,7 +10,6 @@ from fastapi import UploadFile
 
 from app.api.routers.models.response_schemas import (
     GetModelResponse,
-    OptimizationResponse,
     UploadModelResponse,
 )
 from app.config import settings
@@ -168,23 +167,23 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
     file_path = model_dir / file.filename
     file_path.write_bytes(content)
 
-    try:
-        wrapper = PySDParser(
-            model_path=str(file_path),
-            parameters=[p.model_dump() for p in info.parameters],
-        )
-    except Exception as e:
-        raise ModelParseException(
-            filename=file.filename,
-            reason=f"Wrapper initialization failed: {str(e)}",
-        )
-    try:
-        _ = wrapper.run()
-    except Exception as e:
-        raise ModelParseException(
-            filename=file.filename,
-            reason=f"Model execution failed: {str(e)}",
-        )
+    # try:
+    #     wrapper = PySDParser(
+    #         model_path=str(file_path),
+    #         parameters=[p.model_dump() for p in info.parameters],
+    #     )
+    # except Exception as e:
+    #     raise ModelParseException(
+    #         filename=file.filename,
+    #         reason=f"Wrapper initialization failed: {str(e)}",
+    #     )
+    # try:
+    #     _ = wrapper.run()
+    # except Exception as e:
+    #     raise ModelParseException(
+    #         filename=file.filename,
+    #         reason=f"Model execution failed: {str(e)}",
+    #     )
 
     model = ModelSchema(
         file_name=file.filename,
@@ -287,7 +286,7 @@ async def simulate_model(
 
 async def optimize_model(
     session_id: str, model_id: str, config
-) -> OptimizationResponse:
+) -> OptimizationResultSchema:
     """
     Execute ε-greedy multi-armed bandit optimization over a PySD model.
 
@@ -296,7 +295,8 @@ async def optimize_model(
         model_id: Identifier of the uploaded model to optimize.
         config: Optimization configuration object
 
-    returns: Dictionary containing best parameters, best score, and optimization history.
+    Returns:
+        OptimizationResultSchema with best parameters, best score, and optimization history.
 
     Raises:
         ModelParseException: If the model cannot be loaded.
@@ -318,13 +318,17 @@ async def optimize_model(
             )
 
         if config.statistic == "final":
-            return float(df[config.target_variable].iloc[-1])
+            value = float(df[config.target_variable].iloc[-1])
         elif config.statistic == "mean":
-            return float(df[config.target_variable].mean())
+            value = float(df[config.target_variable].mean())
         elif config.statistic == "max":
-            return float(df[config.target_variable].max())
+            value = float(df[config.target_variable].max())
+        elif config.statistic == "min":
+            value = float(df[config.target_variable].min())
         else:
             raise ValueError(f"Unknown statistic: {config.statistic}")
+
+        return value if config.direction == "maximize" else -value
 
     action_shape = (3,) * len(config.parameter_names)
 
@@ -347,10 +351,11 @@ async def optimize_model(
     best_params, best_score = optimizer.optimize()
     history = optimizer.get_history()
 
-    return OptimizationResponse(
-        result=OptimizationResultSchema(
-            best_parameters=dict(zip(config.parameter_names, best_params)),
-            best_score=best_score,
-            history=OptimizationHistorySchema(**history),
-        )
+    if config.direction == "minimize":
+        best_score = -best_score
+
+    return OptimizationResultSchema(
+        best_parameters=dict(zip(config.parameter_names, best_params)),
+        best_score=best_score,
+        history=OptimizationHistorySchema(**history),
     )

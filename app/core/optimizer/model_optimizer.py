@@ -22,7 +22,7 @@ class ModelOptimizer:
         rho_factors: List[float],
         agent: EGreedyAgent,
         objective_fn: Callable,
-        max_runs: int = 500,
+        max_runs: int = 10,
     ) -> None:
         """
         Initialize the optimizer.
@@ -76,14 +76,20 @@ class ModelOptimizer:
         """
         best_score = -np.inf
         best_params = list(self.current_parameters)
-
+        print(
+            f"Starting optimization with initial parameters: {self.current_parameters}"
+        )
         for _ in range(self.max_runs):
             prev_params = list(self.current_parameters)
+            print(f"Current parameters before action: {prev_params}")
             action = self.agent.select_action()
             self._apply_action(action)
 
             if self._is_feasible(self.current_parameters):
                 reward = self._evaluate(self.current_parameters)
+                print(
+                    f"Evaluated parameters: {self.current_parameters} with reward: {reward}"
+                )
                 self.agent.update(action, reward)
 
                 if reward > best_score:
