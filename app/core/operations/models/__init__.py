@@ -22,7 +22,11 @@ from app.core.utils.model_loader import load_model
 from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.optimizer import (
+    OptimizationConfigSchema,
+    OptimizationDefaultsSchema,
     OptimizationHistorySchema,
+    OptimizationOptionsSchema,
+    OptimizationParameterOptionSchema,
     OptimizationResultSchema,
 )
 from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
@@ -284,8 +288,68 @@ async def simulate_model(
     return result
 
 
+def _suggest_bounds(initial_value: float) -> tuple[float, float]:
+    """
+    Build suggested bounds around an initial value.
+    """
+    if initial_value == 0:
+        return (-1.0, 1.0)
+
+    lower = initial_value * 0.5
+    upper = initial_value * 1.5
+    return (lower, upper) if lower <= upper else (upper, lower)
+
+
+def get_optimization_options(
+    session_id: str, model_id: str
+) -> OptimizationOptionsSchema:
+    """
+    Build optimization configuration options for a loaded model.
+    """
+    model_path, _ = load_model(session_id, model_id)
+
+    try:
+        reader = PySDModelReader(model_path)
+        info = reader.read()
+    except Exception as e:
+        raise ModelParseException(
+            filename=model_id,
+            reason=f"Failed to read model metadata: {str(e)}",
+        )
+
+    parameters: list[OptimizationParameterOptionSchema] = []
+    for parameter in info.parameters:
+        initial_value = (
+            float(parameter.initial_value)
+            if parameter.initial_value is not None
+            else 0.0
+        )
+        parameters.append(
+            OptimizationParameterOptionSchema(
+                name=parameter.name,
+                initial_value=initial_value,
+                suggested_bounds=_suggest_bounds(initial_value),
+                suggested_rho_factor=0.01,
+            )
+        )
+
+    target_variables = [
+        variable.name for variable in (info.stocks + info.flows + info.auxiliaries)
+    ]
+
+    return OptimizationOptionsSchema(
+        parameters=parameters,
+        target_variables=target_variables,
+        statistics=["final", "mean", "max", "min"],
+        directions=["maximize", "minimize"],
+        defaults=OptimizationDefaultsSchema(),
+    )
+
+
 async def optimize_model(
-    session_id: str, model_id: str, config
+    session_id: str,
+    model_id: str,
+    config: OptimizationConfigSchema,
 ) -> OptimizationResultSchema:
     """
     Execute ε-greedy multi-armed bandit optimization over a PySD model.
