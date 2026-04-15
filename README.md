@@ -110,6 +110,8 @@ Once the server is running, visit:
 - `POST /api/models/upload/mdl` — Upload and parse a `.mdl` model
 - `DELETE /api/models/{model_id}` — Delete a model by ID
 - `POST /api/models/{model_id}/simulate` — Run a simulation for an uploaded model
+- `GET /api/models/{model_id}/optimization-options` — Retrieve optimization configuration options (parameters, suggested bounds, target variables, statistics, directions)
+- `POST /api/models/{model_id}/optimize` — Run optimization for an uploaded model
 
 > More endpoints will be added as the project evolves.
 
