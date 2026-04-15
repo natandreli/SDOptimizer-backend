@@ -92,7 +92,7 @@ class PySDParser:
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
                 params[pysd_name] = value
 
-        return self.model.run(params=params)
+        return self.model.run(params=params, time_step=0.01)
 
     def evaluate(
         self,
