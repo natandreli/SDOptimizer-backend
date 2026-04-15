@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Literal, Tuple
 
 from pydantic import BaseModel
 
@@ -13,7 +13,30 @@ class OptimizationConfigSchema(BaseModel):
     max_runs: int
 
     target_variable: str
-    statistic: str
+    statistic: Literal["final", "mean", "max", "min"]
+    direction: Literal["maximize", "minimize"] = "maximize"
+
+
+class OptimizationParameterOptionSchema(BaseModel):
+    name: str
+    initial_value: float
+    suggested_bounds: Tuple[float, float]
+    suggested_rho_factor: float = 0.01
+
+
+class OptimizationDefaultsSchema(BaseModel):
+    epsilon: float = 0.7
+    max_runs: int = 200
+    statistic: Literal["final", "mean", "max", "min"] = "max"
+    direction: Literal["maximize", "minimize"] = "maximize"
+
+
+class OptimizationOptionsSchema(BaseModel):
+    parameters: List[OptimizationParameterOptionSchema]
+    target_variables: List[str]
+    statistics: List[Literal["final", "mean", "max", "min"]]
+    directions: List[Literal["maximize", "minimize"]]
+    defaults: OptimizationDefaultsSchema
 
 
 class OptimizationHistorySchema(BaseModel):
