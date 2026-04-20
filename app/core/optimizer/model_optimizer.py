@@ -1,10 +1,7 @@
-from typing import Any, Callable, Dict, List, Tuple
-
 import numpy as np
-
+from typing import Any, Dict, List, Tuple, Callable
 from ..agent.e_greedy_agent import EGreedyAgent
-
-ACTION_DIRECTIONS = [1, -1, 0]
+from ..enviroment.base import BaseEnvironment
 
 
 class ModelOptimizer:
@@ -13,49 +10,36 @@ class ModelOptimizer:
     multi-armed bandit (MAB) strategy.
     """
 
+    ACTION_MAP = {0: 1, 1: -1, 2: 0}  # 0: Increase, 1: Decrease, 2: Maintain
+
     def __init__(
         self,
-        wrapper,
+        environment: BaseEnvironment,
+        agent: EGreedyAgent,
         parameter_names: List[str],
         initial_values: List[float],
         bounds: List[Tuple[float, float]],
         rho_factors: List[float],
-        agent: EGreedyAgent,
-        objective_fn: Callable,
-        max_runs: int = 10,
+        max_runs: int = 100,
     ) -> None:
         """
         Initialize the optimizer.
 
         Args:
-            wrapper: Instance of PySDWrapper used to execute simulations.
-            parameter_names: Names of the parameters to optimize.
-            initial_values: Initial values for each parameter.
-            bounds: List of (min, max) constraints per parameter.
-            rho_factors: Relative step sizes per parameter.
+            environment: SD environment to evaluate configurations.
             agent: ε-greedy bandit agent.
-            objective_fn: Function mapping simulation results → scalar reward.
-            max_runs: Number of optimization iterations.
-
-        Raises:
-            ValueError: If input dimensions are inconsistent.
+            parameter_names: Names of parameters to optimize.
+            initial_values: Initial parameter values.
+            bounds: List of (min, max) tuples for each parameter.
+            rho_factors: Relative step sizes (ρ) for each parameter.
+            max_runs: Number of iterations to execute.
         """
-        if len(parameter_names) != len(initial_values):
-            raise ValueError(
-                "parameter_names and initial_values must have the same length."
-            )
-        if len(bounds) != len(parameter_names):
-            raise ValueError("bounds must match number of parameters.")
-        if len(rho_factors) != len(parameter_names):
-            raise ValueError("rho_factors must match number of parameters.")
-
-        self.wrapper = wrapper
+        self.env = environment
+        self.agent = agent
         self.parameter_names = parameter_names
-        self.current_parameters = list(initial_values)
+        self.current_params = list(initial_values)
         self.bounds = bounds
         self.rho_factors = rho_factors
-        self.agent = agent
-        self.objective_fn = objective_fn
         self.max_runs = max_runs
 
         self.history: Dict[str, List[Any]] = {
@@ -70,97 +54,84 @@ class ModelOptimizer:
         Execute the ε-greedy optimization loop.
 
         Returns:
-            Tuple containing:
-                - best_params: Best parameter configuration found
-                - best_score: Corresponding objective value
+            Tuple of (best_params, best_score).
         """
-        best_score = -np.inf
-        best_params = list(self.current_parameters)
-        print(
-            f"Starting optimization with initial parameters: {self.current_parameters}"
-        )
-        for _ in range(self.max_runs):
-            prev_params = list(self.current_parameters)
-            print(f"Current parameters before action: {prev_params}")
-            action = self.agent.select_action()
-            self._apply_action(action)
+        current_reward = self.env.step(self.current_params)
+        best_params = list(self.current_params)
+        best_score = current_reward
 
-            if self._is_feasible(self.current_parameters):
-                reward = self._evaluate(self.current_parameters)
-                print(
-                    f"Evaluated parameters: {self.current_parameters} with reward: {reward}"
-                )
+        print(f"Starting optimization. Initial reward: {current_reward}")
+
+        for i in range(self.max_runs):
+            action = self.agent.select_action()
+            
+            directions = [self.ACTION_MAP[idx] for idx in action]
+            
+            trial_params = [
+                val * (1 + d * rho) 
+                for val, d, rho in zip(self.current_params, directions, self.rho_factors)
+            ]
+
+            # Check feasibility
+            if self._is_feasible(trial_params):
+                new_reward = self.env.step(trial_params)
+
+                # reward = self.env.step(trial_params)
+                # print(f"Iteration {i}: Action {action}, Reward {reward}")
+                
+                # # Update agent with results
+                # self.agent.update(action, reward)
+
+                # # Update current parameters and reward if improved
+                # if reward > current_reward:
+                #     self.current_params = list(trial_params)
+                #     current_reward = reward
+                    
+                #     # Track global best
+                #     if current_reward > best_score:
+                #         best_score = current_reward
+                #         best_params = list(self.current_params)
+                ## Alternative: Update agent with reward difference using better reward signal, but be careful with zero or negative rewards
+
+                #reward = (new_reward - current_reward) / abs(current_reward)
+
+                reward = new_reward
                 self.agent.update(action, reward)
 
-                if reward > best_score:
-                    best_score = reward
-                    best_params = list(self.current_parameters)
-
+                if new_reward > best_score:
+                    best_score = new_reward
+                    print(f"trial_params: {trial_params}, reward: {reward}")
+                    best_params = list(trial_params)
+                    print(f"best_score updated to {best_score} with params {best_params}")
+                
+                if new_reward > current_reward:
+                    self.current_params = list(trial_params)
+                    current_reward = new_reward
+                else:
+                    pass
             else:
                 reward = -100.0
                 self.agent.update(action, reward)
-                self.current_parameters = prev_params
+                print(f"Iteration {i}: Action {action}, INFEASIBLE (Reward -100)")
 
             self.history["rewards"].append(reward)
             self.history["best_rewards"].append(best_score)
-            self.history["parameters"].append(list(self.current_parameters))
+            self.history["parameters"].append(list(self.current_params))
             self.history["actions"].append(action)
 
         return best_params, best_score
 
     def get_history(self) -> Dict[str, List[Any]]:
-        """
-        Retrieve optimization trajectory data.
-
-        Returns:
-            Dictionary containing:
-                - rewards: Reward at each iteration
-                - best_rewards: Best reward found up to each iteration
-                - parameters: Parameter values at each step
-                - actions: Actions taken at each iteration
-        """
+        """Return optimization execution history."""
         return self.history
 
-    def _apply_action(self, action: tuple) -> None:
-        """
-        Apply a relative update to parameters based on selected action.
-
-        Args:
-            action: Tuple representing action indices for each parameter.
-        """
-        for i, action_idx in enumerate(action):
-            direction = ACTION_DIRECTIONS[action_idx]
-            if direction != 0:
-                self.current_parameters[i] *= 1 + direction * self.rho_factors[i]
-
     def _is_feasible(self, params: List[float]) -> bool:
-        """
-        Check whether parameter values satisfy feasibility constraints.
-
-        Args:
-            params: List of parameter values.
-
-        Returns:
-            True if all parameters are finite and within bounds, False otherwise.
-        """
-        for value, (low, high) in zip(params, self.bounds):
-            if not np.isfinite(value):
+        """Check if parameters are within bounds and are finite."""
+        for val, (low, high) in zip(params, self.bounds):
+            if not np.isfinite(val):
                 return False
-            if low is not None and value < low:
+            if low is not None and val < low:
                 return False
-            if high is not None and value > high:
+            if high is not None and val > high:
                 return False
         return True
-
-    def _evaluate(self, params: List[float]) -> float:
-        """
-        Execute simulation and compute objective value.
-
-        Args:
-            params: Parameter values to evaluate.
-
-        Returns:
-            Scalar reward value (objective function output).
-        """
-        overrides = dict(zip(self.parameter_names, params))
-        return self.wrapper.run_and_evaluate(overrides, self.objective_fn)

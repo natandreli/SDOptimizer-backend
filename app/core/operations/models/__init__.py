@@ -14,6 +14,7 @@ from app.api.routers.models.response_schemas import (
 )
 from app.config import settings
 from app.core.agent.e_greedy_agent import EGreedyAgent
+from app.core.enviroment.pysd_enviroment import PySDEnvironment
 from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
 from app.core.readers.pysd_parser import PySDParser
@@ -401,18 +402,27 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
+    env = PySDEnvironment(
+        parser=wrapper,
+        objective_fn=objective_fn,
+        param_names=config.parameter_names,
+    )
+
     optimizer = ModelOptimizer(
-        wrapper=wrapper,
+        environment=env,
+        agent=agent,
         parameter_names=config.parameter_names,
         initial_values=config.initial_values,
         bounds=config.bounds,
         rho_factors=config.rho_factors,
-        agent=agent,
-        objective_fn=objective_fn,
         max_runs=config.max_runs,
     )
 
-    best_params, best_score = optimizer.optimize()
+    try:
+        best_params, best_score = optimizer.optimize()
+    except Exception as e:
+        raise SimulationException(reason=f"Optimization execution failed: {str(e)}")
+
     history = optimizer.get_history()
 
     if config.direction == "minimize":
