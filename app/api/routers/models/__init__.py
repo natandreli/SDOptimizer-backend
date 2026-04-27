@@ -147,8 +147,10 @@ async def handle_optimize(
     config: OptimizationConfigSchema,
 ):
     try:
+        session_id = request.state.session_id
+        print(f"Starting optimization for model {model_id} in session: {session_id}")
         result = await optimize_model(
-            session_id=request.state.session_id,
+            session_id=session_id,
             model_id=model_id,
             config=config,
         )

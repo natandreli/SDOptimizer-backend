@@ -45,8 +45,10 @@ class PySDFunctionPatcher:
     def apply(cls) -> None:
         """
         Apply the patch to pysd.py_backend.functions.not_implemented_function.
-            - Replaces the target function with a dispatcher that checks for registered fallbacks.
-            - Ensures idempotency by only applying once and storing the original function.
+
+        - Replaces the target function with a dispatcher that checks for registered fallbacks.
+        - Ensures idempotency by only applying once and storing the original function.
+        - Automatically registers a default fallback for Vensim's 'reinitial' function.
         """
         if cls._applied:
             return

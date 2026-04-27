@@ -92,57 +92,13 @@ class PySDParser:
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
                 params[pysd_name] = value
 
-        return self.model.run(params=params, time_step=0.01)
+        return self.model.run(
+            params=params,
+            time_step=0.1,
+            final_time=400,
+            return_timestamps=np.arange(0, 400, 1)
+            )
 
-    def evaluate(
-        self,
-        results: pd.DataFrame,
-        objective_fn: Callable[[pd.DataFrame], float],
-    ) -> float:
-        """
-        Evaluate a scalar objective function on simulation results.
-
-        Args:
-            results: DataFrame returned by `run`, containing time-series data
-                for all model variables.
-
-            objective_fn: Function that takes the results DataFrame and returns
-                a scalar numeric value.
-
-        Returns:
-            float: Scalar value computed by the objective function.
-
-        Raises:
-            ValueError: If the objective function does not return a numeric value.
-            KeyError: If the objective function accesses a non-existent column.
-        """
-        value = objective_fn(results)
-
-        if not isinstance(value, (int, float, np.floating)):
-            raise ValueError("Objective function must return a numeric scalar value.")
-
-        return float(value)
-
-    def run_and_evaluate(
-        self,
-        overrides: Optional[Dict[str, float]],
-        objective_fn: Callable[[pd.DataFrame], float],
-    ) -> float:
-        """
-        Execute the simulation and evaluate the objective function in a single step.
-
-        Args:
-            overrides: Dictionary of parameter overrides to apply during simulation.
-            objective_fn: Function that evaluates the simulation output.
-
-        Returns:
-            float: Scalar objective value.
-
-        Raises:
-            ValueError: If parameters or objective function are invalid.
-        """
-        results = self.run(overrides)
-        return self.evaluate(results, objective_fn)
 
     def validate_overrides(self, overrides: Dict[str, float]) -> None:
         """
