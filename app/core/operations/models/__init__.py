@@ -14,7 +14,6 @@ from app.api.routers.models.response_schemas import (
 )
 from app.config import settings
 from app.core.agent.e_greedy_agent import EGreedyAgent
-from app.core.enviroment.pysd_enviroment import PySDEnvironment
 from app.core.optimizer.model_optimizer import ModelOptimizer
 from app.core.readers.pysd_model_reader import PySDModelReader
 from app.core.readers.pysd_parser import PySDParser
@@ -172,24 +171,6 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
     file_path = model_dir / file.filename
     file_path.write_bytes(content)
 
-    # try:
-    #     wrapper = PySDParser(
-    #         model_path=str(file_path),
-    #         parameters=[p.model_dump() for p in info.parameters],
-    #     )
-    # except Exception as e:
-    #     raise ModelParseException(
-    #         filename=file.filename,
-    #         reason=f"Wrapper initialization failed: {str(e)}",
-    #     )
-    # try:
-    #     _ = wrapper.run()
-    # except Exception as e:
-    #     raise ModelParseException(
-    #         filename=file.filename,
-    #         reason=f"Model execution failed: {str(e)}",
-    #     )
-
     model = ModelSchema(
         file_name=file.filename,
         uploaded_at=datetime.now(timezone.utc).isoformat(),
@@ -292,6 +273,12 @@ async def simulate_model(
 def _suggest_bounds(initial_value: float) -> tuple[float, float]:
     """
     Build suggested bounds around an initial value.
+
+    Args:
+        initial_value: The reference value to generate bounds for.
+
+    Returns:
+        tuple[float, float]: A tuple containing (lower, upper) bounds.
     """
     if initial_value == 0:
         return (-1.0, 1.0)
@@ -306,6 +293,17 @@ def get_optimization_options(
 ) -> OptimizationOptionsSchema:
     """
     Build optimization configuration options for a loaded model.
+
+    Args:
+        session_id: The current session ID.
+        model_id: The unique ID of the uploaded model.
+
+    Returns:
+        OptimizationOptionsSchema: Configuration options including parameters and target variables.
+    
+    Raises: 
+        ModelParseException: If the model cannot be read.
+        SimulationException: If the simulation fails.
     """
     model_path, _ = load_model(session_id, model_id)
 
@@ -402,14 +400,13 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
-    env = PySDEnvironment(
-        parser=wrapper,
-        objective_fn=objective_fn,
-        param_names=config.parameter_names,
-    )
+    def reward_fn(params: list[float]) -> float:
+        overrides = dict(zip(config.parameter_names, params))
+        results = wrapper.run(overrides)
+        return objective_fn(results)
 
     optimizer = ModelOptimizer(
-        environment=env,
+        reward_fn=reward_fn,
         agent=agent,
         parameter_names=config.parameter_names,
         initial_values=config.initial_values,

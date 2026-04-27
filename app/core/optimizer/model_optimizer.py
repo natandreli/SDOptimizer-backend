@@ -1,7 +1,6 @@
 import numpy as np
 from typing import Any, Dict, List, Tuple, Callable
-from ..agent.e_greedy_agent import EGreedyAgent
-from ..enviroment.base import BaseEnvironment
+from app.core.agent.e_greedy_agent import EGreedyAgent
 
 
 class ModelOptimizer:
@@ -14,7 +13,7 @@ class ModelOptimizer:
 
     def __init__(
         self,
-        environment: BaseEnvironment,
+        reward_fn: Callable[[List[float]], float],
         agent: EGreedyAgent,
         parameter_names: List[str],
         initial_values: List[float],
@@ -26,7 +25,7 @@ class ModelOptimizer:
         Initialize the optimizer.
 
         Args:
-            environment: SD environment to evaluate configurations.
+            reward_fn: Function that evaluates parameter configurations and returns a reward.
             agent: ε-greedy bandit agent.
             parameter_names: Names of parameters to optimize.
             initial_values: Initial parameter values.
@@ -34,7 +33,7 @@ class ModelOptimizer:
             rho_factors: Relative step sizes (ρ) for each parameter.
             max_runs: Number of iterations to execute.
         """
-        self.env = environment
+        self.reward_fn = reward_fn
         self.agent = agent
         self.parameter_names = parameter_names
         self.current_params = list(initial_values)
@@ -51,7 +50,16 @@ class ModelOptimizer:
 
 
     def optimize(self) -> Tuple[List[float], float]:
-        current_reward = self.env.step(self.current_params)
+        """
+        Execute the ε-greedy optimization process.
+
+        Iteratively explores and exploits parameter configurations to maximize
+        the reward returned by the reward function.
+
+        Returns:
+            Tuple[List[float], float]: A tuple containing (best_parameters, best_score).
+        """
+        current_reward = self.reward_fn(self.current_params)
         best_params = list(self.current_params)
         best_score = current_reward
 
@@ -65,7 +73,7 @@ class ModelOptimizer:
             ]
 
             if self._is_feasible(trial_params):
-                new_reward = self.env.step(trial_params)
+                new_reward = self.reward_fn(trial_params)
                 
                 reward = new_reward
                 self.agent.update(action, reward)
@@ -89,11 +97,26 @@ class ModelOptimizer:
         return best_params, best_score
 
     def get_history(self) -> Dict[str, List[Any]]:
-        """Return optimization execution history."""
+        """
+        Return optimization execution history.
+
+        Returns:
+            Dict[str, List[Any]]: Dictionary containing history of rewards, best rewards,
+                parameters, and actions.
+        """
         return self.history
 
     def _is_feasible(self, params: List[float]) -> bool:
-        """Check if parameters are within bounds and are finite."""
+        """
+        Check if parameters are within bounds and are finite.
+
+        Args:
+            params: List of parameter values to validate.
+
+        Returns:
+            bool: True if all parameters are within their respective bounds and are finite,
+                False otherwise.
+        """
         for val, (low, high) in zip(params, self.bounds):
             if not np.isfinite(val):
                 return False

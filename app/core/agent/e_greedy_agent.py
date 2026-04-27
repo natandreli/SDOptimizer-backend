@@ -56,6 +56,15 @@ class EGreedyAgent:
         return self._greedy_action()
 
     def _greedy_action(self) -> Tuple[int, ...]:
+        """
+        Select the best action based on the current Q-table.
+
+        In case of multiple actions with the same maximum Q-value,
+        one is chosen at random to break ties.
+
+        Returns:
+            Tuple[int, ...]: Tuple representing the indices of the selected greedy action.
+        """
         max_val = np.max(self.q_table)
         candidates = np.argwhere(self.q_table == max_val)
         chosen = candidates[random.randrange(len(candidates))]
@@ -78,10 +87,7 @@ class EGreedyAgent:
         """
         self.n_table[action] += 1
         n = self.n_table[action]
-        #q_value = self.q_table[action]
-        #self.q_table[action] = q_value + (reward - q_value) / float(n)
         self.q_table[action] += reward
-        #self._decay_epsilon()
 
     def update(self, action: Tuple[int, ...], reward: float) -> None:
         """
@@ -97,8 +103,3 @@ class EGreedyAgent:
         q_value = self.q_table[action]
         
         self.q_table[action] = q_value + (reward - q_value) / float(n)
-        
-        # self._decay_epsilon()
-
-    #def _decay_epsilon(self) -> None:
-        #self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
