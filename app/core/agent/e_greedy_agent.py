@@ -62,6 +62,10 @@ class EGreedyAgent:
         return tuple(chosen.tolist())
 
     def _random_action(self) -> Tuple[int, ...]:
+        """Select a random action uniformly from the action space.
+        Returns:
+            Tuple representing random action indices.
+        """
         return tuple(random.randrange(dim) for dim in self.q_table.shape)
 
     def update(self, action: Tuple[int, ...], reward: float) -> None:
@@ -78,6 +82,23 @@ class EGreedyAgent:
         #self.q_table[action] = q_value + (reward - q_value) / float(n)
         self.q_table[action] += reward
         #self._decay_epsilon()
+
+    def update(self, action: Tuple[int, ...], reward: float) -> None:
+        """
+        Update Q-value for a given action using incremental averaging.
+
+        Args:
+            action: Action index tuple.
+            reward: Observed reward.
+        """
+        self.n_table[action] += 1
+        n = self.n_table[action]
+        
+        q_value = self.q_table[action]
+        
+        self.q_table[action] = q_value + (reward - q_value) / float(n)
+        
+        # self._decay_epsilon()
 
     #def _decay_epsilon(self) -> None:
         #self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)

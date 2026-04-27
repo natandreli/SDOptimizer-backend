@@ -49,70 +49,37 @@ class ModelOptimizer:
             "actions": [],
         }
 
-    def optimize(self) -> Tuple[List[float], float]:
-        """
-        Execute the ε-greedy optimization loop.
 
-        Returns:
-            Tuple of (best_params, best_score).
-        """
+    def optimize(self) -> Tuple[List[float], float]:
         current_reward = self.env.step(self.current_params)
         best_params = list(self.current_params)
         best_score = current_reward
 
-        print(f"Starting optimization. Initial reward: {current_reward}")
-
         for i in range(self.max_runs):
             action = self.agent.select_action()
-            
             directions = [self.ACTION_MAP[idx] for idx in action]
             
             trial_params = [
-                val * (1 + d * rho) 
+                val * (1 + d * rho)
                 for val, d, rho in zip(self.current_params, directions, self.rho_factors)
             ]
 
-            # Check feasibility
             if self._is_feasible(trial_params):
                 new_reward = self.env.step(trial_params)
-
-                # reward = self.env.step(trial_params)
-                # print(f"Iteration {i}: Action {action}, Reward {reward}")
                 
-                # # Update agent with results
-                # self.agent.update(action, reward)
-
-                # # Update current parameters and reward if improved
-                # if reward > current_reward:
-                #     self.current_params = list(trial_params)
-                #     current_reward = reward
-                    
-                #     # Track global best
-                #     if current_reward > best_score:
-                #         best_score = current_reward
-                #         best_params = list(self.current_params)
-                ## Alternative: Update agent with reward difference using better reward signal, but be careful with zero or negative rewards
-
-                #reward = (new_reward - current_reward) / abs(current_reward)
-
                 reward = new_reward
                 self.agent.update(action, reward)
 
-                if new_reward > best_score:
-                    best_score = new_reward
-                    print(f"trial_params: {trial_params}, reward: {reward}")
-                    best_params = list(trial_params)
-                    print(f"best_score updated to {best_score} with params {best_params}")
-                
                 if new_reward > current_reward:
                     self.current_params = list(trial_params)
                     current_reward = new_reward
-                else:
-                    pass
+                    
+                    if current_reward > best_score:
+                        best_score = current_reward
+                        best_params = list(self.current_params)
             else:
                 reward = -100.0
                 self.agent.update(action, reward)
-                print(f"Iteration {i}: Action {action}, INFEASIBLE (Reward -100)")
 
             self.history["rewards"].append(reward)
             self.history["best_rewards"].append(best_score)

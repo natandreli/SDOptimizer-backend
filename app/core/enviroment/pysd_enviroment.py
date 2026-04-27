@@ -21,19 +21,13 @@ class PySDEnvironment(BaseEnvironment):
         self.parser = parser
         self.objective_fn = objective_fn
         self.param_names = param_names
+        
 
     def step(self, parameters: List[float]) -> float:
-        """
-        Execute one full simulation run and return the reward.
-
-        Args:
-            parameters: Current parameter values for the model.
-
-        Returns:
-            float: Scalar reward value from the objective function.
-        """
         overrides = dict(zip(self.param_names, parameters))
-        return self.parser.run_and_evaluate(overrides, self.objective_fn)
+        results = self.parser.run(overrides)
+        return self.objective_fn(results)
+
 
     def reset(self) -> None:
         """
