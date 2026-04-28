@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -96,9 +96,8 @@ class PySDParser:
             params=params,
             time_step=0.1,
             final_time=400,
-            return_timestamps=np.arange(0, 400, 1)
-            )
-
+            return_timestamps=np.arange(0, 400, 1),
+        )
 
     def validate_overrides(self, overrides: Dict[str, float]) -> None:
         """

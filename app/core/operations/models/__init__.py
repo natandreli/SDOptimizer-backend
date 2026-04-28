@@ -300,8 +300,8 @@ def get_optimization_options(
 
     Returns:
         OptimizationOptionsSchema: Configuration options including parameters and target variables.
-    
-    Raises: 
+
+    Raises:
         ModelParseException: If the model cannot be read.
         SimulationException: If the simulation fails.
     """

@@ -1,5 +1,7 @@
+from typing import Any, Callable, Dict, List, Tuple
+
 import numpy as np
-from typing import Any, Dict, List, Tuple, Callable
+
 from app.core.agent.e_greedy_agent import EGreedyAgent
 
 
@@ -48,7 +50,6 @@ class ModelOptimizer:
             "actions": [],
         }
 
-
     def optimize(self) -> Tuple[List[float], float]:
         """
         Execute the ε-greedy optimization process.
@@ -60,28 +61,38 @@ class ModelOptimizer:
             Tuple[List[float], float]: A tuple containing (best_parameters, best_score).
         """
         current_reward = self.reward_fn(self.current_params)
+
+        if not np.isfinite(current_reward):
+            current_reward = -100.0
+
         best_params = list(self.current_params)
         best_score = current_reward
 
         for i in range(self.max_runs):
             action = self.agent.select_action()
             directions = [self.ACTION_MAP[idx] for idx in action]
-            
+
             trial_params = [
                 val * (1 + d * rho)
-                for val, d, rho in zip(self.current_params, directions, self.rho_factors)
+                for val, d, rho in zip(
+                    self.current_params, directions, self.rho_factors
+                )
             ]
 
             if self._is_feasible(trial_params):
                 new_reward = self.reward_fn(trial_params)
-                
-                reward = new_reward
-                self.agent.update(action, reward)
 
-                if new_reward > current_reward:
+                if not np.isfinite(new_reward):
+                    reward = -100.0
+                    self.agent.update(action, reward)
+                else:
+                    reward = new_reward
+                    self.agent.update(action, reward)
+
+                if np.isfinite(new_reward) and new_reward > current_reward:
                     self.current_params = list(trial_params)
                     current_reward = new_reward
-                    
+
                     if current_reward > best_score:
                         best_score = current_reward
                         best_params = list(self.current_params)
