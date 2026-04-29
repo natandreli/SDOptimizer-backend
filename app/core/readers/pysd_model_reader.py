@@ -197,9 +197,16 @@ class PySDModelReader:
     @staticmethod
     def _detect_flow_py_names(component_module: Any) -> set[str]:
         """
-        Detect flow variables by inspecting Integ ddt lambdas.
+        Heuristic to detect flow variable Python names by analyzing INTEG derivatives.
 
-        Example extracted text: "lambda: nac_conejos() - muert_conejos()"
+        Flows are identified as any variables that appear in the source code of
+        the ddt functions of INTEG components, excluding the INTEG variables themselves.   
+
+        Args:
+            component_module: Compiled module in model.components._components 
+
+        Returns:
+            Set of Python names that are likely flows. 
         """
         flow_names: set[str] = set()
         pattern = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
@@ -253,6 +260,18 @@ class PySDModelReader:
     ) -> tuple[list[str], list[str]]:
         """
         Parse a stock's equation to identify inflows and outflows.
+
+        This function analyzes the equation string of a stock's derivative (ddt)
+        to extract variable names. It classifies them as inflows or outflows based
+        on their presence in the set of known flow variable names.
+
+        Args:
+            equation_str: The source code string of the stock's ddt function.
+            flow_real_names: Set of real names of variables identified as flows.
+            py_to_real: Mapping from Python variable names to real variable names.
+
+        Returns:
+            Tuple of two lists: (inflows, outflows) containing real variable names.
         """
         if not equation_str:
             return [], []
