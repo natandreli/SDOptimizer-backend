@@ -82,7 +82,7 @@ class EGreedyAgent:
     def _random_action(self) -> Tuple[int, ...]:
         """
         Select a random action uniformly from the action space.
-        
+
         Returns:
             Tuple representing random action indices.
         """

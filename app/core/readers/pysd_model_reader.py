@@ -200,13 +200,13 @@ class PySDModelReader:
         Heuristic to detect flow variable Python names by analyzing INTEG derivatives.
 
         Flows are identified as any variables that appear in the source code of
-        the ddt functions of INTEG components, excluding the INTEG variables themselves.   
+        the ddt functions of INTEG components, excluding the INTEG variables themselves.
 
         Args:
-            component_module: Compiled module in model.components._components 
+            component_module: Compiled module in model.components._components
 
         Returns:
-            Set of Python names that are likely flows. 
+            Set of Python names that are likely flows.
         """
         flow_names: set[str] = set()
         pattern = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
