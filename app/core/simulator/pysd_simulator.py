@@ -63,7 +63,12 @@ class PySDSimulator:
         )
 
     def _get_parameter_names(self) -> set[str]:
-        """Return parameter (constant) names from model documentation."""
+        """
+        Extract parameter names from the model documentation.
+
+        Returns:
+            Set of parameter names (both real and PySD names) found in the model documentation.
+        """
         parameter_names: set[str] = set()
         try:
             doc = self.model.doc
@@ -99,7 +104,15 @@ class PySDSimulator:
     def _compute_summary_stats(
         time_series: dict[str, list[float]],
     ) -> dict[str, dict[str, float]]:
-        """Compute mean, min, max, initial, final for each variable's time series."""
+        """
+        Compute mean, min, max, initial, final for each variable's time series.
+
+        Args:
+            time_series: A dictionary mapping variable names to their time series values.
+
+        Returns:
+            A dictionary mapping variable names to their summary statistics.
+        """
         stats: dict[str, dict[str, float]] = {}
         for name, values in time_series.items():
             if not values:
