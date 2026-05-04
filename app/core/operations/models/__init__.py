@@ -29,7 +29,13 @@ from app.schemas.optimizer import (
     OptimizationParameterOptionSchema,
     OptimizationResultSchema,
 )
-from app.schemas.simulation import SimulationConfigSchema, SimulationResultSchema
+from app.schemas.simulation import (
+    SimulationConfigSchema,
+    SimulationDefaultsSchema,
+    SimulationOptionsSchema,
+    SimulationParameterOptionSchema,
+    SimulationResultSchema,
+)
 
 
 def _get_models_dir(session_id: str | None) -> Path:
@@ -342,6 +348,51 @@ def get_optimization_options(
         statistics=["final", "mean", "max", "min"],
         directions=["maximize", "minimize"],
         defaults=OptimizationDefaultsSchema(),
+    )
+
+
+def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsSchema:
+    """
+    Build simulation configuration options for a loaded model.
+
+    Args:
+        session_id: The current session ID.
+        model_id: The unique ID of the uploaded model.
+
+    Returns:
+        SimulationOptionsSchema: Configuration options including parameters.
+
+    Raises:
+        ModelParseException: If the model cannot be read.
+    """
+    model_path, _ = load_model(session_id, model_id)
+
+    try:
+        reader = PySDModelReader(model_path)
+        info = reader.read()
+    except Exception as e:
+        raise ModelParseException(
+            filename=model_id,
+            reason=f"Failed to read model metadata: {str(e)}",
+        )
+
+    parameters: list[SimulationParameterOptionSchema] = []
+    for parameter in info.parameters:
+        initial_value = (
+            float(parameter.initial_value)
+            if parameter.initial_value is not None
+            else 0.0
+        )
+        parameters.append(
+            SimulationParameterOptionSchema(
+                name=parameter.name,
+                initial_value=initial_value,
+            )
+        )
+
+    return SimulationOptionsSchema(
+        parameters=parameters,
+        defaults=SimulationDefaultsSchema(),
     )
 
 

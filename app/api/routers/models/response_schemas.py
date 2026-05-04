@@ -7,6 +7,7 @@ from app.schemas import (
     SimulationResultSchema,
 )
 from app.schemas.optimizer import OptimizationOptionsSchema, OptimizationResultSchema
+from app.schemas.simulation import SimulationOptionsSchema
 
 
 class UploadModelResponse(BaseModel):
@@ -29,3 +30,7 @@ class OptimizationResponse(BaseModel):
 
 class OptimizationOptionsResponse(BaseModel):
     options: OptimizationOptionsSchema
+
+
+class SimulationOptionsResponse(BaseModel):
+    options: SimulationOptionsSchema

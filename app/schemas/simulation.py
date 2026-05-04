@@ -37,6 +37,21 @@ class SimulationConfigSchema(BaseModel):
     )
 
 
+class SimulationParameterOptionSchema(BaseModel):
+    name: str
+    initial_value: float
+
+
+class SimulationDefaultsSchema(BaseModel):
+    dt: float = 0.25
+    total_time: float = 100.0
+
+
+class SimulationOptionsSchema(BaseModel):
+    parameters: List[SimulationParameterOptionSchema]
+    defaults: SimulationDefaultsSchema
+
+
 class SimulationResultSchema(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={

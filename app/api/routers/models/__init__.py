@@ -5,6 +5,7 @@ from app.api.routers.models.response_schemas import (
     GetModelResponse,
     OptimizationOptionsResponse,
     OptimizationResponse,
+    SimulationOptionsResponse,
     SimulationResponse,
     UploadModelResponse,
 )
@@ -12,6 +13,7 @@ from app.core.operations.models import (
     delete_model,
     get_all_models,
     get_optimization_options,
+    get_simulation_options,
     optimize_model,
     simulate_model,
     upload_mdl_file,
@@ -196,4 +198,31 @@ def handle_get_optimization_options(request: Request, model_id: str):
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error retrieving optimization options: {str(e)}",
+        )
+
+
+@router.get(
+    "/{model_id}/simulation-options",
+    response_model=SimulationOptionsResponse,
+    description=(
+        "Get model-specific options to build the simulation configuration form. "
+        "Includes the parameters that can be overridden."
+    ),
+)
+def handle_get_simulation_options(request: Request, model_id: str):
+    try:
+        options = get_simulation_options(
+            session_id=request.state.session_id,
+            model_id=model_id,
+        )
+        return SimulationOptionsResponse(options=options)
+    except ModelParseException as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model error: {e.reason}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error retrieving simulation options: {str(e)}",
         )
