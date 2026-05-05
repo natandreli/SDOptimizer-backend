@@ -46,7 +46,26 @@ class OptimizationHistorySchema(BaseModel):
     actions: List[Tuple[int, ...]]
 
 
+class ParameterChangeSchema(BaseModel):
+    initial_value: float
+    optimized_value: float
+    change_percentage: float
+
+
+class OptimizationConfigSummarySchema(BaseModel):
+    target_variable: str
+    statistic: str
+    direction: str
+    max_runs: int
+    epsilon: float
+
+
 class OptimizationResultSchema(BaseModel):
     best_parameters: Dict[str, float]
     best_score: float
     history: OptimizationHistorySchema
+    initial_parameters: Dict[str, float]
+    initial_score: float
+    improvement_percentage: float
+    parameter_changes: Dict[str, ParameterChangeSchema]
+    config_summary: OptimizationConfigSummarySchema

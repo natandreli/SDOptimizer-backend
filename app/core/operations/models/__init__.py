@@ -23,11 +23,13 @@ from app.exceptions import ModelParseException, SimulationException
 from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.optimizer import (
     OptimizationConfigSchema,
+    OptimizationConfigSummarySchema,
     OptimizationDefaultsSchema,
     OptimizationHistorySchema,
     OptimizationOptionsSchema,
     OptimizationParameterOptionSchema,
     OptimizationResultSchema,
+    ParameterChangeSchema,
 )
 from app.schemas.simulation import (
     SimulationConfigSchema,
@@ -456,6 +458,12 @@ async def optimize_model(
         results = wrapper.run(overrides)
         return objective_fn(results)
 
+    # Compute baseline score with initial parameters
+    try:
+        raw_initial_score = reward_fn(list(config.initial_values))
+    except Exception:
+        raw_initial_score = 0.0
+
     optimizer = ModelOptimizer(
         reward_fn=reward_fn,
         agent=agent,
@@ -473,11 +481,60 @@ async def optimize_model(
 
     history = optimizer.get_history()
 
-    if config.direction == "minimize":
-        best_score = -best_score
+    # Convert scores back to original scale when minimizing
+    initial_score = (
+        -raw_initial_score if config.direction == "minimize" else raw_initial_score
+    )
+    final_best_score = -best_score if config.direction == "minimize" else best_score
+
+    # Compute improvement percentage
+    if abs(initial_score) > 1e-12:
+        if config.direction == "minimize":
+            improvement_pct = (
+                (initial_score - final_best_score) / abs(initial_score)
+            ) * 100
+        else:
+            improvement_pct = (
+                (final_best_score - initial_score) / abs(initial_score)
+            ) * 100
+    else:
+        improvement_pct = (
+            0.0 if abs(final_best_score - initial_score) < 1e-12 else 100.0
+        )
+
+    # Build per-parameter change info
+    initial_params_dict = dict(zip(config.parameter_names, config.initial_values))
+    best_params_dict = dict(zip(config.parameter_names, best_params))
+
+    parameter_changes: dict[str, ParameterChangeSchema] = {}
+    for name in config.parameter_names:
+        init_val = initial_params_dict[name]
+        opt_val = best_params_dict[name]
+        if abs(init_val) > 1e-12:
+            change_pct = ((opt_val - init_val) / abs(init_val)) * 100
+        else:
+            change_pct = 0.0 if abs(opt_val - init_val) < 1e-12 else 100.0
+        parameter_changes[name] = ParameterChangeSchema(
+            initial_value=init_val,
+            optimized_value=opt_val,
+            change_percentage=change_pct,
+        )
+
+    config_summary = OptimizationConfigSummarySchema(
+        target_variable=config.target_variable,
+        statistic=config.statistic,
+        direction=config.direction,
+        max_runs=config.max_runs,
+        epsilon=config.epsilon,
+    )
 
     return OptimizationResultSchema(
-        best_parameters=dict(zip(config.parameter_names, best_params)),
-        best_score=best_score,
+        best_parameters=best_params_dict,
+        best_score=final_best_score,
         history=OptimizationHistorySchema(**history),
+        initial_parameters=initial_params_dict,
+        initial_score=initial_score,
+        improvement_percentage=round(improvement_pct, 4),
+        parameter_changes=parameter_changes,
+        config_summary=config_summary,
     )
