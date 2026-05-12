@@ -66,7 +66,13 @@ class PySDParser:
             for p in parameters
         }
 
-    def run(self, overrides: Optional[Dict[str, float]] = None, return_columns: Optional[List[str]] = None) -> pd.DataFrame:
+    def run(
+        self, 
+        overrides: Optional[Dict[str, float]] = None, 
+        return_columns: Optional[List[str]] = None,
+        dt: Optional[float] = None,
+        total_time: Optional[float] = None,
+    ) -> pd.DataFrame:
         """
         Execute the simulation with optional parameter overrides.
 
@@ -95,10 +101,10 @@ class PySDParser:
 
         run_kwargs = {
             "params": params,
-            "time_step": 0.1,
-            # "final_time": 400,
-            # "return_timestamps": np.arange(0, 400, 1)
         }
+
+        if dt is not None and total_time is not None:
+            run_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
 
         if return_columns is not None:
             run_kwargs["return_columns"] = return_columns

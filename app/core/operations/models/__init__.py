@@ -440,7 +440,9 @@ async def optimize_model(
         overrides = dict(zip(config.parameter_names, params))
         results = wrapper.run(
             overrides=overrides,
-            return_columns=[config.target_variable]
+            return_columns=[config.target_variable],
+            dt=config.dt,
+            total_time=config.total_time,
         )
         return objective_fn(results)
 
