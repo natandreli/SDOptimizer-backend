@@ -42,14 +42,28 @@ class PySDModelReader:
 
     def load(self) -> pysd.PySD:
         """
-        Load .mdl file and return the PySD model object directly for simulation.
+        Load model file and return the PySD model object directly for simulation.
+        If a compiled .py version exists, it loads it directly for speed.
 
         Returns:
             pysd.PySD: The loaded PySD model.
         """
+        # If the file is already a .py file, load it directly
+        if self.filepath.suffix.lower() == ".py":
+            return pysd.load(str(self.filepath))
+
+        # Check if a compiled .py file already exists in the same directory
+        py_file = self.filepath.with_suffix(".py")
+        if py_file.exists():
+            try:
+                return pysd.load(str(py_file))
+            except Exception:
+                # If loading .py fails, fallback to read_vensim
+                pass
+
         return pysd.read_vensim(str(self.filepath))
 
-    def read(self) -> ModelSchema:
+    def read(self) -> tuple[ModelSchema, pysd.PySD]:
         """
         Parse .mdl file and extract model structure.
 
@@ -57,7 +71,8 @@ class PySDModelReader:
         representation to ModelSchema for API compatibility.
 
         Returns:
-            ModelSchema: Container with all model variables
+            tuple[ModelSchema, pysd.PySD]: A tuple containing the ModelSchema
+                and the loaded PySD model object.
 
         Raises:
             Exception: If PySD fails to parse the file
@@ -75,7 +90,7 @@ class PySDModelReader:
 
         doc = model.doc
         if doc is None or doc.empty:
-            return info
+            return info, model
 
         component_module = model.components._components
         flow_py_names = self._detect_flow_py_names(component_module)
@@ -162,7 +177,7 @@ class PySDModelReader:
             stock_var.inflows = inflows
             stock_var.outflows = outflows
 
-        return info
+        return info, model
 
     @staticmethod
     def _to_str(value: Any) -> str:

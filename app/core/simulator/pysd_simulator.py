@@ -30,7 +30,7 @@ class PySDSimulator:
         )
         df = self.model.run(
             params=params,
-            return_columns=None,
+            return_columns=self.config.return_columns,
             return_timestamps=return_timestamps,
         )
         time_series = {col: df[col].tolist() for col in df.columns}

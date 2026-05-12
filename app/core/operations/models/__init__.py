@@ -88,7 +88,7 @@ async def get_all_models(session_id: str) -> list[GetModelResponse]:
 
         try:
             reader = PySDModelReader(file_path)
-            info = reader.read()
+            info, _ = reader.read()
 
             model = ModelSchema(
                 file_name=file_path.name,
@@ -166,7 +166,7 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             parse_tmp_file = Path(tmp_dir) / file.filename
             parse_tmp_file.write_bytes(content)
             reader = PySDModelReader(parse_tmp_file)
-            info = reader.read()
+            info, _ = reader.read()
     except Exception as e:
         raise ModelParseException(
             filename=file.filename,
@@ -313,16 +313,7 @@ def get_optimization_options(
         ModelParseException: If the model cannot be read.
         SimulationException: If the simulation fails.
     """
-    model_path, _ = load_model(session_id, model_id)
-
-    try:
-        reader = PySDModelReader(model_path)
-        info = reader.read()
-    except Exception as e:
-        raise ModelParseException(
-            filename=model_id,
-            reason=f"Failed to read model metadata: {str(e)}",
-        )
+    _, info, _ = load_model(session_id, model_id)
 
     parameters: list[OptimizationParameterOptionSchema] = []
     for parameter in info.parameters:
@@ -367,16 +358,7 @@ def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsS
     Raises:
         ModelParseException: If the model cannot be read.
     """
-    model_path, _ = load_model(session_id, model_id)
-
-    try:
-        reader = PySDModelReader(model_path)
-        info = reader.read()
-    except Exception as e:
-        raise ModelParseException(
-            filename=model_id,
-            reason=f"Failed to read model metadata: {str(e)}",
-        )
+    _, info, _ = load_model(session_id, model_id)
 
     parameters: list[SimulationParameterOptionSchema] = []
     for parameter in info.parameters:
@@ -420,10 +402,11 @@ async def optimize_model(
         SimulationException: If simulation execution fails.
     """
 
-    model_path, parameters = load_model(session_id, model_id)
+    pysd_model_path, info, pysd_model = load_model(session_id, model_id)
+    parameters = [p.model_dump() for p in info.parameters]
 
     wrapper = PySDParser(
-        model_path=model_path,
+        model_path_or_obj=pysd_model,
         parameters=parameters,
     )
 
@@ -455,7 +438,10 @@ async def optimize_model(
 
     def reward_fn(params: list[float]) -> float:
         overrides = dict(zip(config.parameter_names, params))
-        results = wrapper.run(overrides)
+        results = wrapper.run(
+            overrides=overrides,
+            return_columns=[config.target_variable]
+        )
         return objective_fn(results)
 
     # Compute baseline score with initial parameters

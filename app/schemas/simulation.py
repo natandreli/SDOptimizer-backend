@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,6 +33,13 @@ class SimulationConfigSchema(BaseModel):
         description=(
             "Override parameter values. Keys are parameter real names "
             "(e.g. 'cash revenue'), values are the new numeric values."
+        ),
+    )
+    return_columns: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "List of variable names to return in the results. "
+            "If None, all model variables are returned."
         ),
     )
 
