@@ -56,6 +56,7 @@ class PySDModelReader:
         py_file = self.filepath.with_suffix(".py")
         if py_file.exists():
             try:
+                # IMPORTANT: PySD's load is much faster than read_vensim
                 return pysd.load(str(py_file))
             except Exception:
                 # If loading .py fails, fallback to read_vensim
@@ -79,8 +80,8 @@ class PySDModelReader:
         """
         PySDFunctionPatcher.apply()
 
-        # Load model using PySD
-        model = pysd.read_vensim(str(self.filepath))
+        # Load model using optimized load method
+        model = self.load()
 
         # Initialize schema
         info = ModelSchema(
@@ -93,7 +94,10 @@ class PySDModelReader:
             return info, model
 
         component_module = model.components._components
-        flow_py_names = self._detect_flow_py_names(component_module)
+        
+        # PRE-EXTRACTION: Get all source code once to avoid slow inspect.getsource calls in loops
+        source_map = self._extract_source_map(component_module)
+        flow_py_names = self._detect_flow_py_names(source_map)
 
         for _, row in doc.iterrows():
             real_name = str(row.get("Real Name", "")).strip()
@@ -114,7 +118,7 @@ class PySDModelReader:
             unit = self._to_str(row.get("Units"))
             description = self._to_str(row.get("Comment"))
 
-            definition = self._get_element_definition(component_module, py_name)
+            definition = source_map.get(py_name)
 
             var_type = self._classify_element(
                 comp_type=self._to_str(row.get("Type")),
@@ -162,13 +166,9 @@ class PySDModelReader:
         for stock_var in info.stocks:
             py_name = real_to_py.get(stock_var.name, "")
             integ_name = f"_integ_{py_name}"
-            # Para PySD, la ecuación real del stock está dentro de la propiedad ddt de su Integ
-            try:
-                integ_obj = getattr(component_module, integ_name)
-                import inspect
-
-                eq_str = inspect.getsource(integ_obj.ddt)
-            except Exception:
+            
+            eq_str = source_map.get(integ_name, "")
+            if not eq_str:
                 eq_str = info.raw_equations.get(stock_var.name, stock_var.equation)
 
             inflows, outflows = self._parse_stock_flows(
@@ -187,57 +187,62 @@ class PySDModelReader:
         return "" if value_str.lower() == "nan" else value_str
 
     @staticmethod
-    def _get_element_definition(component_module: Any, py_name: str) -> str | None:
+    def _extract_source_map(component_module: Any) -> dict[str, str]:
         """
-        Extract equation from the generated PySD component function source.
-
-        Args:
-            component_module: Compiled module in model.components._components
-            py_name: Python component name
-
-        Returns:
-            Equation string or None if not available
+        Extract all function definitions from the component module source in one go.
+        Returns a mapping from py_name to the return expression.
         """
+        source_map = {}
         try:
-            func = getattr(component_module, py_name)
-            source = inspect.getsource(func)
-            for line in source.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("return "):
-                    return stripped.replace("return ", "", 1).strip()
-            return None
+            # This is the single slow call, but it's much better than doing it in a loop
+            source = inspect.getsource(component_module)
+            
+            # Regex to find function definitions and their return statements
+            # Pattern: def name(): [docstring] return expr
+            func_pattern = re.compile(
+                r"def\s+([a-zA-Z_][a-zA-Z0-9_]*)\(\):\s*(?:\"\"\"[\s\S]*?\"\"\"|)\s*return\s+(.+)",
+                re.MULTILINE
+            )
+            for match in func_pattern.finditer(source):
+                name, expr = match.groups()
+                source_map[name] = expr.strip()
+                
+            # Regex to find INTEG definitions for stocks
+            # Pattern: _integ_name = Integ(lambda: inflow - outflow, lambda: initial)
+            integ_pattern = re.compile(
+                r"(_integ_[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(Integ\([\s\S]*?\))",
+                re.MULTILINE
+            )
+            for match in integ_pattern.finditer(source):
+                name, expr = match.groups()
+                source_map[name] = expr.strip()
+                
         except Exception:
-            return None
+            pass
+        return source_map
 
     @staticmethod
-    def _detect_flow_py_names(component_module: Any) -> set[str]:
+    def _detect_flow_py_names(source_map: dict[str, str]) -> set[str]:
         """
-        Heuristic to detect flow variable Python names by analyzing INTEG derivatives.
-
-        Flows are identified as any variables that appear in the source code of
-        the ddt functions of INTEG components, excluding the INTEG variables themselves.
+        Detect flow variable Python names by analyzing INTEG derivatives in the source map.
 
         Args:
-            component_module: Compiled module in model.components._components
+            source_map: Map of variable names to their source expressions.
 
         Returns:
             Set of Python names that are likely flows.
         """
         flow_names: set[str] = set()
+        # Look for variables called as functions inside Integ calls
         pattern = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
 
-        for name in dir(component_module):
+        for name, expr in source_map.items():
             if not name.startswith("_integ_"):
                 continue
 
-            try:
-                integ_obj = getattr(component_module, name)
-                source = inspect.getsource(integ_obj.ddt)
-                for match in pattern.findall(source):
-                    if match not in {"lambda"} and not match.startswith("_integ_"):
-                        flow_names.add(match)
-            except Exception:
-                continue
+            for match in pattern.findall(expr):
+                if match not in {"lambda", "Integ"} and not match.startswith("_integ_"):
+                    flow_names.add(match)
 
         return flow_names
 
@@ -275,18 +280,6 @@ class PySDModelReader:
     ) -> tuple[list[str], list[str]]:
         """
         Parse a stock's equation to identify inflows and outflows.
-
-        This function analyzes the equation string of a stock's derivative (ddt)
-        to extract variable names. It classifies them as inflows or outflows based
-        on their presence in the set of known flow variable names.
-
-        Args:
-            equation_str: The source code string of the stock's ddt function.
-            flow_real_names: Set of real names of variables identified as flows.
-            py_to_real: Mapping from Python variable names to real variable names.
-
-        Returns:
-            Tuple of two lists: (inflows, outflows) containing real variable names.
         """
         if not equation_str:
             return [], []

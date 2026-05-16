@@ -104,8 +104,10 @@ class PySDParser:
         }
 
         if dt is not None and total_time is not None:
-            run_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
-
+            # Only generate default timestamps if not already provided
+            if "return_timestamps" not in run_kwargs:
+                run_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
+        
         if return_columns is not None:
             run_kwargs["return_columns"] = return_columns
 

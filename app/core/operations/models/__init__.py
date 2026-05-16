@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import UploadFile
 
-from app.api.routers.models.response_schemas import (
+from app.schemas.models import (
     GetModelResponse,
+    ModelSchema,
+    ModelVariableSchema,
     UploadModelResponse,
 )
 from app.config import settings
@@ -20,7 +23,6 @@ from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.core.utils.model_loader import load_model
 from app.exceptions import ModelParseException, SimulationException
-from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.optimizer import (
     OptimizationConfigSchema,
     OptimizationConfigSummarySchema,
@@ -86,32 +88,33 @@ async def get_all_models(session_id: str) -> list[GetModelResponse]:
             continue
         seen_file_names.add(file_path.name)
 
+        # FAST PATH: Check if we have cached metadata
+        info_path = model_dir / "info.json"
+        if info_path.exists():
+            try:
+                info = ModelSchema.model_validate_json(info_path.read_text())
+                models.append(
+                    GetModelResponse(
+                        model_id=model_dir.name,
+                        model=info,
+                    )
+                )
+                continue
+            except Exception:
+                pass
+
+        # SLOW PATH: Parse model and cache it
         try:
             reader = PySDModelReader(file_path)
             info, _ = reader.read()
 
-            model = ModelSchema(
-                file_name=file_path.name,
-                uploaded_at=datetime.fromtimestamp(
-                    file_path.stat().st_mtime,
-                    tz=timezone.utc,
-                ).isoformat(),
-                parsed_with="pysd",
-                format=info.format,
-                stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
-                flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
-                parameters=[
-                    ModelVariableSchema(**v.model_dump()) for v in info.parameters
-                ],
-                auxiliaries=[
-                    ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries
-                ],
-            )
+            # Cache metadata for next time
+            info_path.write_text(info.model_dump_json())
 
             models.append(
                 GetModelResponse(
                     model_id=model_dir.name,
-                    model=model,
+                    model=info,
                 )
             )
         except Exception:
@@ -167,32 +170,34 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             parse_tmp_file.write_bytes(content)
             reader = PySDModelReader(parse_tmp_file)
             info, _ = reader.read()
+            
+            # Persist the model directory
+            model_dir = uploads_dir / model_id
+            model_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1. Save the original .mdl file
+            file_path = model_dir / file.filename
+            file_path.write_bytes(content)
+
+            # 2. Persist the generated .py file (crucial for performance)
+            py_tmp_file = parse_tmp_file.with_suffix(".py")
+            if py_tmp_file.exists():
+                shutil.copy(py_tmp_file, model_dir / py_tmp_file.name)
+
+            # 3. Cache the metadata JSON
+            info.uploaded_at = datetime.now(timezone.utc).isoformat()
+            info_path = model_dir / "info.json"
+            info_path.write_text(info.model_dump_json())
+
     except Exception as e:
         raise ModelParseException(
             filename=file.filename,
             reason=str(e),
         )
 
-    model_dir = uploads_dir / model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = model_dir / file.filename
-    file_path.write_bytes(content)
-
-    model = ModelSchema(
-        file_name=file.filename,
-        uploaded_at=datetime.now(timezone.utc).isoformat(),
-        parsed_with="pysd",
-        format=info.format,
-        stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
-        flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
-        parameters=[ModelVariableSchema(**v.model_dump()) for v in info.parameters],
-        auxiliaries=[ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries],
-    )
-
     return UploadModelResponse(
         model_id=model_id,
-        model=model,
+        model=info,
     )
 
 
@@ -267,6 +272,7 @@ async def simulate_model(
             reason=str(e),
         )
 
+    start_time = time.perf_counter()
     try:
         simulator = PySDSimulator(pysd_model, config)
         result = simulator.simulate()
@@ -274,6 +280,10 @@ async def simulate_model(
         raise
     except Exception as e:
         raise SimulationException(reason=str(e))
+    finally:
+        end_time = time.perf_counter()
+        duration_ms = (end_time - start_time) * 1000
+        print(f"DEBUG: Simulation for model {model_id} took {duration_ms:.2f}ms")
 
     return result
 
@@ -335,12 +345,38 @@ def get_optimization_options(
         variable.name for variable in (info.stocks + info.flows + info.auxiliaries)
     ]
 
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.01) or 0.01)
+        
+        duration = internal_final - internal_initial
+        if duration <= 0:
+            duration = 100.0
+            
+        suggested_total_time = duration
+        
+        # AGGRESSIVE OPTIMIZATION: Target 100 steps for the optimization loop
+        # 500 runs * 100 steps = 50,000 operations (Should take ~20-30s)
+        actual_steps = duration / internal_dt if internal_dt > 0 else 0
+        if actual_steps > 200:
+            suggested_dt = duration / 100.0
+        else:
+            suggested_dt = internal_dt if internal_dt > 0 else (duration / 100.0)
+            
+    except Exception:
+        suggested_total_time = 100.0
+        suggested_dt = 0.25
+
     return OptimizationOptionsSchema(
         parameters=parameters,
         target_variables=target_variables,
         statistics=["final", "mean", "max", "min"],
         directions=["maximize", "minimize"],
-        defaults=OptimizationDefaultsSchema(),
+        defaults=OptimizationDefaultsSchema(
+            dt=suggested_dt,
+            total_time=suggested_total_time
+        ),
     )
 
 
@@ -410,6 +446,31 @@ async def optimize_model(
         parameters=parameters,
     )
 
+    # --- Force Smart Time Scaling for Optimization Performance ---
+    dt = config.dt
+    total_time = config.total_time
+
+    if dt is None or total_time is None:
+        try:
+            internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+            internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+            internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
+            
+            duration = internal_final - internal_initial
+            if duration <= 0: duration = 100.0
+            
+            if total_time is None: total_time = duration
+            if dt is None:
+                # Target 100 steps for maximum speed
+                actual_steps = duration / internal_dt if internal_dt > 0 else 0
+                if actual_steps > 100:
+                    dt = duration / 100.0
+                else:
+                    dt = internal_dt if internal_dt > 0 else (duration / 100.0)
+        except Exception:
+            if total_time is None: total_time = 100.0
+            if dt is None: dt = 1.0
+
     def objective_fn(df):
         if config.target_variable not in df.columns:
             raise ValueError(
@@ -438,11 +499,17 @@ async def optimize_model(
 
     def reward_fn(params: list[float]) -> float:
         overrides = dict(zip(config.parameter_names, params))
+        run_kwargs = {}
+        # TURBO MODE: If only final value is needed, don't collect all intermediate steps
+        if config.statistic == "final":
+            run_kwargs["return_timestamps"] = [config.total_time]
+
         results = wrapper.run(
             overrides=overrides,
             return_columns=[config.target_variable],
-            dt=config.dt,
-            total_time=config.total_time,
+            dt=dt,
+            total_time=total_time,
+            **run_kwargs
         )
         return objective_fn(results)
 
@@ -462,10 +529,15 @@ async def optimize_model(
         max_runs=config.max_runs,
     )
 
+    start_time = time.perf_counter()
     try:
         best_params, best_score = optimizer.optimize()
     except Exception as e:
         raise SimulationException(reason=f"Optimization execution failed: {str(e)}")
+    finally:
+        end_time = time.perf_counter()
+        duration_ms = (end_time - start_time) * 1000
+        print(f"DEBUG: Optimization for model {model_id} took {duration_ms:.2f}ms")
 
     history = optimizer.get_history()
 

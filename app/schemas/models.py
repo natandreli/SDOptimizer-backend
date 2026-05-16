@@ -67,3 +67,13 @@ class ModelSchema(BaseModel):
             "parameters": [v.model_dump() for v in self.parameters],
             "auxiliaries": [v.model_dump() for v in self.auxiliaries],
         }
+
+
+class UploadModelResponse(BaseModel):
+    model_id: str
+    model: Optional[ModelSchema] = None
+
+
+class GetModelResponse(BaseModel):
+    model_id: str
+    model: Optional[ModelSchema] = None
