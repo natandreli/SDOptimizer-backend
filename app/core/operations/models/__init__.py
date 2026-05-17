@@ -746,6 +746,9 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
+    steps_per_sim = int(total_time / dt) if dt and total_time else 1
+    total_math_steps = config.max_runs * steps_per_sim
+
     return OptimizationResultSchema(
         best_parameters=best_params_dict,
         best_score=final_best_score,
@@ -755,4 +758,6 @@ async def optimize_model(
         improvement_percentage=round(improvement_pct, 4),
         parameter_changes=parameter_changes,
         config_summary=config_summary,
+        steps_per_simulation=steps_per_sim,
+        total_mathematical_steps=total_math_steps,
     )

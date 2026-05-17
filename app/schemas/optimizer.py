@@ -73,3 +73,5 @@ class OptimizationResultSchema(BaseModel):
     improvement_percentage: float
     parameter_changes: Dict[str, ParameterChangeSchema]
     config_summary: OptimizationConfigSummarySchema
+    steps_per_simulation: int = 0
+    total_mathematical_steps: int = 0
