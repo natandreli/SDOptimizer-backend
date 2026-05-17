@@ -290,17 +290,85 @@ async def simulate_model(
             config.dt = 0.25
 
     start_time = time.perf_counter()
-    try:
-        simulator = PySDSimulator(pysd_model, config)
-        result = simulator.simulate()
-    except SimulationException:
-        raise
-    except Exception as e:
-        raise SimulationException(reason=str(e))
-    finally:
-        end_time = time.perf_counter()
-        duration_ms = (end_time - start_time) * 1000
-        print(f"DEBUG: Simulation for model {model_id} took {duration_ms:.2f}ms")
+    result = None
+    numba_success = False
+
+    py_files = list(model_dir.glob("*.py"))
+    if py_files:
+        try:
+            from app.core.compiler.numba_compiler import NumbaModelCompiler
+            compiler = NumbaModelCompiler(py_files[0], pysd_model)
+            compiler.compile()
+            
+            # Determine output recording timestamps
+            total_time = config.total_time
+            dt = config.dt
+            if total_time / dt > 1000:
+                steps_per_output = max(1, int((total_time / 1000) / dt))
+                output_step = steps_per_output * dt
+            else:
+                output_step = dt
+            return_timestamps = np.arange(0, total_time + output_step, output_step)
+            
+            series = compiler.simulate(
+                parameter_overrides=config.parameter_overrides,
+                dt=config.dt,
+                total_time=config.total_time,
+                return_timestamps=return_timestamps,
+                return_columns=config.return_columns,
+            )
+            
+            time_list = series.pop("time")
+            series["time"] = time_list
+            
+            parameter_names = set(compiler.constants)
+            parameter_series = {
+                name: values
+                for name, values in series.items()
+                if name in parameter_names and name != "time"
+            }
+            variable_series = {
+                name: values
+                for name, values in series.items()
+                if name not in parameter_names and name != "time"
+            }
+            
+            summary_stats = {}
+            for name, values in series.items():
+                if name != "time" and values:
+                    arr = np.array(values, dtype=float)
+                    summary_stats[name] = {
+                        "mean": float(np.nanmean(arr)),
+                        "min": float(np.nanmin(arr)),
+                        "max": float(np.nanmax(arr)),
+                        "final": float(arr[-1]),
+                        "initial": float(arr[0]),
+                    }
+                    
+            result = SimulationResultSchema(
+                time_series=variable_series,
+                parameter_series=parameter_series,
+                summary_stats=summary_stats,
+                steps_executed=int(config.total_time / config.dt) if config.dt and config.total_time else 1,
+                config=config,
+            )
+            numba_success = True
+            print(f"DEBUG: Simulation for model {model_id} executed with Dynamic Compiler JIT/Pure-Python!")
+        except Exception as e:
+            print(f"DEBUG: Dynamic Compiler simulation failed or unsupported: {e}. Falling back to PySD.")
+
+    if not numba_success:
+        try:
+            simulator = PySDSimulator(pysd_model, config)
+            result = simulator.simulate()
+        except SimulationException:
+            raise
+        except Exception as e:
+            raise SimulationException(reason=str(e))
+        finally:
+            end_time = time.perf_counter()
+            duration_ms = (end_time - start_time) * 1000
+            print(f"DEBUG: Simulation for model {model_id} took {duration_ms:.2f}ms")
 
     return result
 
@@ -463,6 +531,17 @@ async def optimize_model(
         parameters=parameters,
     )
 
+    numba_compiler = None
+    model_dir = settings.TEMP_DIR / session_id / "uploads" / model_id
+    py_files = list(model_dir.glob("*.py"))
+    if py_files:
+        try:
+            from app.core.compiler.numba_compiler import NumbaModelCompiler
+            numba_compiler = NumbaModelCompiler(py_files[0], pysd_model).compile()
+            print(f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Compiler.")
+        except Exception as e:
+            print(f"DEBUG: Dynamic Compiler initialization failed: {e}. Falling back to PySD.")
+
     # --- Force Smart Time Scaling for Optimization Performance ---
     dt = config.dt
     total_time = config.final_time if config.final_time is not None else config.total_time
@@ -527,6 +606,47 @@ async def optimize_model(
             return memo_cache[key]
 
         cache_misses += 1
+
+        if numba_compiler is not None:
+            try:
+                overrides = dict(zip(config.parameter_names, params))
+                run_kwargs = {}
+                if config.statistic == "final":
+                    run_kwargs["return_timestamps"] = np.array([total_time])
+                else:
+                    if dt > 0 and total_time / dt > 1000:
+                        steps_per_output = max(1, int((total_time / 1000) / dt))
+                        output_step = steps_per_output * dt
+                        run_kwargs["return_timestamps"] = np.arange(0, total_time + output_step, output_step)
+
+                series = numba_compiler.simulate(
+                    parameter_overrides=overrides,
+                    dt=dt,
+                    total_time=total_time,
+                    return_columns=[config.target_variable],
+                    **run_kwargs
+                )
+                vals = series[config.target_variable]
+                if not vals:
+                    raise ValueError(f"Variable '{config.target_variable}' returned empty trajectory in JIT.")
+
+                if config.statistic == "final":
+                    value = float(vals[-1])
+                elif config.statistic == "mean":
+                    value = float(np.mean(vals))
+                elif config.statistic == "max":
+                    value = float(np.max(vals))
+                elif config.statistic == "min":
+                    value = float(np.min(vals))
+                else:
+                    raise ValueError(f"Unknown statistic: {config.statistic}")
+
+                score = value if config.direction == "maximize" else -value
+                memo_cache[key] = score
+                return score
+            except Exception as e:
+                print(f"DEBUG: Dynamic compiler JIT/Pure-Python simulation error: {e}. Falling back dynamically to PySD for this trial.")
+
         overrides = dict(zip(config.parameter_names, params))
         run_kwargs = {}
         # TURBO MODE: If only final value is needed, don't collect all intermediate steps
