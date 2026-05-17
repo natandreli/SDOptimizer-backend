@@ -18,15 +18,20 @@ class SimulationConfigSchema(BaseModel):
         }
     )
 
-    dt: float = Field(
-        default=0.25,
+    dt: Optional[float] = Field(
+        default=None,
         gt=0,
         description="Time step for Euler integration.",
     )
-    total_time: float = Field(
-        default=100.0,
+    total_time: Optional[float] = Field(
+        default=None,
         gt=0,
         description="Total simulation time.",
+    )
+    final_time: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Final simulation time.",
     )
     parameter_overrides: Dict[str, float] = Field(
         default_factory=dict,

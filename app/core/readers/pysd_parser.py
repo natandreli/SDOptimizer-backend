@@ -66,12 +66,28 @@ class PySDParser:
             for p in parameters
         }
 
+        # Identify all stateful variables (stocks) in the model doc to handle stock initial overrides dynamically
+        self.stateful_vars: Dict[str, str] = {}
+        try:
+            doc = self.model.doc
+            if doc is not None and not doc.empty:
+                for _, row in doc.iterrows():
+                    element_type = str(row.get("Type", "")).strip().lower()
+                    if element_type == "stateful":
+                        real_name = str(row.get("Real Name", "")).strip()
+                        py_name = str(row.get("Py Name", "")).strip()
+                        self.stateful_vars[real_name] = py_name
+                        self.stateful_vars[py_name] = py_name
+        except Exception:
+            pass
+
     def run(
         self, 
         overrides: Optional[Dict[str, float]] = None, 
         return_columns: Optional[List[str]] = None,
         dt: Optional[float] = None,
         total_time: Optional[float] = None,
+        **run_kwargs,
     ) -> pd.DataFrame:
         """
         Execute the simulation with optional parameter overrides.
@@ -90,28 +106,53 @@ class PySDParser:
             ValueError: If any parameter is invalid or out of bounds.
         """
         params = self.initial_values.copy()
+        stock_overrides = {}
 
         if overrides:
             self.validate_overrides(overrides)
             for name, value in overrides.items():
                 if not np.isfinite(value):
                     raise ValueError(f"'{name}' has invalid value: {value}")
+                
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
-                params[pysd_name] = value
+                
+                # Check if this name refers to a stateful variable (stock)
+                if name in self.stateful_vars or pysd_name in self.stateful_vars:
+                    # Map to the proper Py Name for PySD to accept it
+                    key = self.stateful_vars.get(name, self.stateful_vars.get(pysd_name, pysd_name))
+                    stock_overrides[key] = value
+                else:
+                    params[pysd_name] = value
 
-        run_kwargs = {
+        full_kwargs = {
             "params": params,
         }
+        # Merge extra run kwargs (e.g. return_timestamps from Turbo Mode)
+        full_kwargs.update(run_kwargs)
+
+        if stock_overrides:
+            # Pass custom stock overrides via initial_condition!
+            full_kwargs["initial_condition"] = (0, stock_overrides)
 
         if dt is not None and total_time is not None:
             # Only generate default timestamps if not already provided
-            if "return_timestamps" not in run_kwargs:
-                run_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
+            if "return_timestamps" not in full_kwargs:
+                full_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
         
         if return_columns is not None:
-            run_kwargs["return_columns"] = return_columns
+            full_kwargs["return_columns"] = return_columns
 
-        return self.model.run(**run_kwargs)
+        # Override integration step size in PySD's components.Time manager to enforce user's input dt.
+        # This drastically reduces the number of steps and solves the PySD simulation speed bottleneck!
+        original_time_step_func = getattr(self.model.time, "time_step", None)
+        if dt is not None:
+            self.model.time.time_step = lambda: dt
+
+        try:
+            return self.model.run(**full_kwargs)
+        finally:
+            if original_time_step_func is not None:
+                self.model.time.time_step = original_time_step_func
 
     def validate_overrides(self, overrides: Dict[str, float]) -> None:
         """
@@ -127,6 +168,10 @@ class PySDParser:
         """
         for name, value in overrides.items():
             pysd_name = self.params_map.get(name, name.replace(" ", "_"))
+
+            # If it's a stateful variable (stock), it is valid!
+            if name in self.stateful_vars or pysd_name in self.stateful_vars:
+                continue
 
             if pysd_name not in self.param_bounds:
                 raise ValueError(f"Unknown parameter: '{name}'")

@@ -18,6 +18,7 @@ class OptimizationConfigSchema(BaseModel):
 
     dt: Optional[float] = None
     total_time: Optional[float] = None
+    final_time: Optional[float] = None
 
 
 class OptimizationParameterOptionSchema(BaseModel):

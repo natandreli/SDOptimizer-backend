@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import time
 import uuid
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -272,6 +273,22 @@ async def simulate_model(
             reason=str(e),
         )
 
+    # Resolve total_time / final_time from the payload, falling back to model defaults
+    resolved_total_time = config.final_time if config.final_time is not None else config.total_time
+    if resolved_total_time is None:
+        try:
+            resolved_total_time = float(pysd_model.components.final_time())
+        except Exception:
+            resolved_total_time = 100.0
+    config.total_time = resolved_total_time
+
+    # Resolve dt from the payload, falling back to model defaults
+    if config.dt is None:
+        try:
+            config.dt = float(pysd_model.components.time_step())
+        except Exception:
+            config.dt = 0.25
+
     start_time = time.perf_counter()
     try:
         simulator = PySDSimulator(pysd_model, config)
@@ -448,7 +465,7 @@ async def optimize_model(
 
     # --- Force Smart Time Scaling for Optimization Performance ---
     dt = config.dt
-    total_time = config.total_time
+    total_time = config.final_time if config.final_time is not None else config.total_time
 
     if dt is None or total_time is None:
         try:
@@ -497,12 +514,30 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
+    memo_cache = {}
+    cache_hits = 0
+    cache_misses = 0
+
     def reward_fn(params: list[float]) -> float:
+        nonlocal cache_hits, cache_misses
+        # Round parameters to 8 decimals to prevent tiny precision mismatches
+        key = tuple(round(p, 8) for p in params)
+        if key in memo_cache:
+            cache_hits += 1
+            return memo_cache[key]
+
+        cache_misses += 1
         overrides = dict(zip(config.parameter_names, params))
         run_kwargs = {}
         # TURBO MODE: If only final value is needed, don't collect all intermediate steps
         if config.statistic == "final":
-            run_kwargs["return_timestamps"] = [config.total_time]
+            run_kwargs["return_timestamps"] = [total_time]
+        else:
+            # Enforce larger return_timestamps interval (target max 1000 points) to avoid DataFrame overhead in PySD
+            if dt > 0 and total_time / dt > 1000:
+                steps_per_output = max(1, int((total_time / 1000) / dt))
+                output_step = steps_per_output * dt
+                run_kwargs["return_timestamps"] = np.arange(0, total_time + output_step, output_step)
 
         results = wrapper.run(
             overrides=overrides,
@@ -511,7 +546,9 @@ async def optimize_model(
             total_time=total_time,
             **run_kwargs
         )
-        return objective_fn(results)
+        score = objective_fn(results)
+        memo_cache[key] = score
+        return score
 
     # Compute baseline score with initial parameters
     try:
@@ -538,6 +575,7 @@ async def optimize_model(
         end_time = time.perf_counter()
         duration_ms = (end_time - start_time) * 1000
         print(f"DEBUG: Optimization for model {model_id} took {duration_ms:.2f}ms")
+        print(f"DEBUG: Memoization Cache Stats - Hits: {cache_hits}, Misses: {cache_misses}")
 
     history = optimizer.get_history()
 
