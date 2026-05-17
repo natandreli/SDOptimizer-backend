@@ -5,15 +5,15 @@ from pathlib import Path
 import numpy as np
 import pysd
 
-logger = logging.getLogger("pure_python_compiler")
+logger = logging.getLogger("vector_compiler")
 
 
-class NumbaCompilationError(Exception):
+class VectorCompilationError(Exception):
     """Raised when AST compilation or execution fails."""
     pass
 
 
-class NumbaModelCompiler:
+class VectorModelCompiler:
     """
     Dynamic Vensim-to-NumPy Vectorised Compiler (100% MIT-Licensed, Numba-Free).
     
@@ -22,13 +22,10 @@ class NumbaModelCompiler:
     Provides ~110x speedup over standard PySD model.run().
     """
 
-    def __init__(self, model_py_path: str | Path, pysd_model: pysd.PySD, use_numba: bool | None = None) -> None:
+    def __init__(self, model_py_path: str | Path, pysd_model: pysd.PySD) -> None:
         self.model_py_path = Path(model_py_path)
         self.model = pysd_model
         self.doc = pysd_model.doc
-
-        # Strictly Numba-free for 100% commercial and licensing compliance
-        self.use_numba = False
 
         self.stocks: list[str] = []
         self.constants: list[str] = []
@@ -70,7 +67,7 @@ class NumbaModelCompiler:
                 self.name_to_pyname[real.strip()] = py
                 self.pyname_to_realname[py] = real
 
-    def compile(self) -> NumbaModelCompiler:
+    def compile(self) -> VectorModelCompiler:
         """Parses PySD Python file AST, restructures, topological sorts, and compiles equations."""
         try:
             with open(self.model_py_path, "r", encoding="utf-8") as f:
@@ -225,7 +222,7 @@ class NumbaModelCompiler:
                 "    return times, trajectory"
             ])
 
-            # Pure Python Trajectory Evaluator for auxiliary downsampling
+            # Trajectory Evaluator for auxiliary downsampling
             eval_lines = ["def evaluate_vars_fn(trajectory, params, times):"]
             eval_lines.append("    n_steps = len(times)")
             
@@ -278,7 +275,7 @@ class NumbaModelCompiler:
             return self
 
         except Exception as e:
-            raise NumbaCompilationError(f"AST Compilation failed: {e}") from e
+            raise VectorCompilationError(f"AST Compilation failed: {e}") from e
 
     def simulate(
         self,
@@ -290,7 +287,7 @@ class NumbaModelCompiler:
     ) -> dict[str, list[float]]:
         """Executes simulation with extreme NumPy vectorized speed."""
         if self._simulate_fn is None:
-            raise NumbaCompilationError("Compiler must be compiled before simulate is called.")
+            raise VectorCompilationError("Compiler must be compiled before simulate is called.")
 
         overrides = {}
         if parameter_overrides:

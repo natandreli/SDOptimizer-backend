@@ -291,13 +291,13 @@ async def simulate_model(
 
     start_time = time.perf_counter()
     result = None
-    numba_success = False
+    compiler_success = False
 
     py_files = list(model_dir.glob("*.py"))
     if py_files:
         try:
-            from app.core.compiler.numba_compiler import NumbaModelCompiler
-            compiler = NumbaModelCompiler(py_files[0], pysd_model)
+            from app.core.compiler.vector_compiler import VectorModelCompiler
+            compiler = VectorModelCompiler(py_files[0], pysd_model)
             compiler.compile()
             
             # Determine output recording timestamps
@@ -352,12 +352,12 @@ async def simulate_model(
                 steps_executed=int(config.total_time / config.dt) if config.dt and config.total_time else 1,
                 config=config,
             )
-            numba_success = True
-            print(f"DEBUG: Simulation for model {model_id} executed with Dynamic Compiler JIT/Pure-Python!")
+            compiler_success = True
+            print(f"DEBUG: Simulation for model {model_id} executed with Dynamic Vector Compiler (MIT)!")
         except Exception as e:
-            print(f"DEBUG: Dynamic Compiler simulation failed or unsupported: {e}. Falling back to PySD.")
+            print(f"DEBUG: Dynamic Vector Compiler simulation failed: {e}. Falling back to PySD.")
 
-    if not numba_success:
+    if not compiler_success:
         try:
             simulator = PySDSimulator(pysd_model, config)
             result = simulator.simulate()
@@ -531,17 +531,6 @@ async def optimize_model(
         parameters=parameters,
     )
 
-    numba_compiler = None
-    model_dir = settings.TEMP_DIR / session_id / "uploads" / model_id
-    py_files = list(model_dir.glob("*.py"))
-    if py_files:
-        try:
-            from app.core.compiler.numba_compiler import NumbaModelCompiler
-            numba_compiler = NumbaModelCompiler(py_files[0], pysd_model).compile()
-            print(f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Compiler.")
-        except Exception as e:
-            print(f"DEBUG: Dynamic Compiler initialization failed: {e}. Falling back to PySD.")
-
     # --- Force Smart Time Scaling for Optimization Performance ---
     dt = config.dt
     total_time = config.final_time if config.final_time is not None else config.total_time
@@ -586,6 +575,17 @@ async def optimize_model(
 
         return value if config.direction == "maximize" else -value
 
+    vector_compiler = None
+    model_dir = settings.TEMP_DIR / session_id / "uploads" / model_id
+    py_files = list(model_dir.glob("*.py"))
+    if py_files:
+        try:
+            from app.core.compiler.vector_compiler import VectorModelCompiler
+            vector_compiler = VectorModelCompiler(py_files[0], pysd_model).compile()
+            print(f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Vector Compiler (MIT).")
+        except Exception as e:
+            print(f"DEBUG: Dynamic Vector Compiler initialization failed: {e}. Falling back to PySD.")
+
     action_shape = (3,) * len(config.parameter_names)
 
     agent = EGreedyAgent(
@@ -607,7 +607,7 @@ async def optimize_model(
 
         cache_misses += 1
 
-        if numba_compiler is not None:
+        if vector_compiler is not None:
             try:
                 overrides = dict(zip(config.parameter_names, params))
                 run_kwargs = {}
@@ -619,7 +619,7 @@ async def optimize_model(
                         output_step = steps_per_output * dt
                         run_kwargs["return_timestamps"] = np.arange(0, total_time + output_step, output_step)
 
-                series = numba_compiler.simulate(
+                series = vector_compiler.simulate(
                     parameter_overrides=overrides,
                     dt=dt,
                     total_time=total_time,
@@ -628,7 +628,7 @@ async def optimize_model(
                 )
                 vals = series[config.target_variable]
                 if not vals:
-                    raise ValueError(f"Variable '{config.target_variable}' returned empty trajectory in JIT.")
+                    raise ValueError(f"Variable '{config.target_variable}' returned empty trajectory in Vector Compiler.")
 
                 if config.statistic == "final":
                     value = float(vals[-1])
@@ -645,7 +645,7 @@ async def optimize_model(
                 memo_cache[key] = score
                 return score
             except Exception as e:
-                print(f"DEBUG: Dynamic compiler JIT/Pure-Python simulation error: {e}. Falling back dynamically to PySD for this trial.")
+                print(f"DEBUG: Dynamic Vector Compiler simulation error: {e}. Falling back dynamically to PySD for this trial.")
 
         overrides = dict(zip(config.parameter_names, params))
         run_kwargs = {}
