@@ -33,6 +33,8 @@ class OptimizationDefaultsSchema(BaseModel):
     max_runs: int = 200
     statistic: Literal["final", "mean", "max", "min"] = "max"
     direction: Literal["maximize", "minimize"] = "maximize"
+    dt: Optional[float] = None
+    total_time: Optional[float] = None
 
 
 class OptimizationOptionsSchema(BaseModel):

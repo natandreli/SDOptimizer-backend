@@ -15,11 +15,9 @@ class VectorCompilationError(Exception):
 
 class VectorModelCompiler:
     """
-    Dynamic Vensim-to-NumPy Vectorised Compiler (100% MIT-Licensed, Numba-Free).
+    Dynamic Vensim-to-NumPy Vectorised Compiler
     
     Translates PySD models into pure NumPy mathematical integration loops.
-    Zero binary dependencies, zero license worries, 100% commercial-friendly.
-    Provides ~110x speedup over standard PySD model.run().
     """
 
     def __init__(self, model_py_path: str | Path, pysd_model: pysd.PySD) -> None:

@@ -192,31 +192,25 @@ class PySDModelReader:
         Extract all function definitions from the component module source in one go.
         Returns a mapping from py_name to the return expression.
         """
+        import ast
         source_map = {}
         try:
-            # This is the single slow call, but it's much better than doing it in a loop
+            # Get source of the components module
             source = inspect.getsource(component_module)
+            tree = ast.parse(source)
             
-            # Regex to find function definitions and their return statements
-            # Pattern: def name(): [docstring] return expr
-            func_pattern = re.compile(
-                r"def\s+([a-zA-Z_][a-zA-Z0-9_]*)\(\):\s*(?:\"\"\"[\s\S]*?\"\"\"|)\s*return\s+(.+)",
-                re.MULTILINE
-            )
-            for match in func_pattern.finditer(source):
-                name, expr = match.groups()
-                source_map[name] = expr.strip()
-                
-            # Regex to find INTEG definitions for stocks
-            # Pattern: _integ_name = Integ(lambda: inflow - outflow, lambda: initial)
-            integ_pattern = re.compile(
-                r"(_integ_[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(Integ\([\s\S]*?\))",
-                re.MULTILINE
-            )
-            for match in integ_pattern.finditer(source):
-                name, expr = match.groups()
-                source_map[name] = expr.strip()
-                
+            # Walk the AST to extract function return expressions and stock Integ definitions
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    for body_node in node.body:
+                        if isinstance(body_node, ast.Return):
+                            if body_node.value is not None:
+                                source_map[node.name] = ast.unparse(body_node.value).strip()
+                            break
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id.startswith("_integ_"):
+                            source_map[target.id] = ast.unparse(node.value).strip()
         except Exception:
             pass
         return source_map
@@ -264,12 +258,12 @@ class PySDModelReader:
             Type: "stock", "flow", "parameter", or "auxiliary"
         """
         comp_type_lower = comp_type.lower()
+        if py_name in flow_py_names:
+            return "flow"
         if comp_type_lower == "stateful":
             return "stock"
         if comp_type_lower == "constant":
             return "parameter"
-        if py_name in flow_py_names:
-            return "flow"
         return "auxiliary"
 
     @staticmethod

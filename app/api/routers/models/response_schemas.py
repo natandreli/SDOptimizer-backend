@@ -10,7 +10,6 @@ from app.schemas.models import (
 from app.schemas.optimizer import OptimizationOptionsSchema, OptimizationResultSchema
 from app.schemas.simulation import SimulationOptionsSchema, SimulationResultSchema
 
-
 class SimulationResponse(BaseModel):
     result: SimulationResultSchema = None
 

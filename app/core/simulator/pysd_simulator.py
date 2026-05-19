@@ -22,7 +22,7 @@ class PySDSimulator:
         Returns:
             SimulationResultSchema container with results.
         """
-        # Determine output recording interval (target around 1000 points max for smooth chart rendering and zero JSON overhead)
+        # Determine output recording interval (target around 5000 points max for smooth chart rendering and zero JSON overhead)
         total_time = self.config.total_time
         dt = self.config.dt
         
