@@ -26,8 +26,8 @@ class PySDSimulator:
         total_time = self.config.total_time
         dt = self.config.dt
         
-        if total_time / dt > 1000:
-            steps_per_output = max(1, int((total_time / 1000) / dt))
+        if dt > 0 and total_time / dt > 1000:
+            steps_per_output = max(1, round((total_time / 1000) / dt))
             output_step = steps_per_output * dt
         else:
             output_step = dt

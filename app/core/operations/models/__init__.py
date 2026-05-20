@@ -547,30 +547,33 @@ async def optimize_model(
         parameters=parameters,
     )
 
-    # --- Force Smart Time Scaling for Optimization Performance ---
+    # --- Optimization Time Settings ---
     dt = config.dt
     total_time = config.final_time if config.final_time is not None else config.total_time
 
-    if dt is None or total_time is None:
-        try:
-            internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
-            internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
-            internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
-            
-            duration = internal_final - internal_initial
-            if duration <= 0: duration = 100.0
-            
-            if total_time is None: total_time = duration
-            if dt is None:
-                # Target 100 steps for maximum speed
-                actual_steps = duration / internal_dt if internal_dt > 0 else 0
-                if actual_steps > 100:
-                    dt = duration / 100.0
-                else:
-                    dt = internal_dt if internal_dt > 0 else (duration / 100.0)
-        except Exception:
-            if total_time is None: total_time = 100.0
-            if dt is None: dt = 1.0
+    internal_initial = 0.0
+    internal_final = 100.0
+    internal_dt = 1.0
+
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
+    except Exception:
+        pass
+
+    duration = internal_final - internal_initial
+    if duration <= 0: 
+        duration = 100.0
+
+    if total_time is None: 
+        total_time = duration
+
+    if dt is None:
+        # Preserve the internal timestep for mathematical fidelity.
+        # We will optimize performance by reducing return_timestamps (output density) 
+        # instead of the mathematical integration step.
+        dt = internal_dt if internal_dt > 0 else 1.0
 
     def objective_fn(df):
         if config.target_variable not in df.columns:
@@ -628,12 +631,14 @@ async def optimize_model(
                 overrides = dict(zip(config.parameter_names, params))
                 run_kwargs = {}
                 if config.statistic == "final":
-                    run_kwargs["return_timestamps"] = np.array([total_time])
+                    run_kwargs["return_timestamps"] = np.array([internal_initial + total_time])
                 else:
-                    if dt > 0 and total_time / dt > 1000:
-                        steps_per_output = max(1, int((total_time / 1000) / dt))
+                    steps = total_time / dt if dt > 0 else 0
+                    if steps > 1000:
+                        # Subsample output to max 1000 points without modifying the integration `dt`
+                        steps_per_output = max(1, round((total_time / 1000) / dt))
                         output_step = steps_per_output * dt
-                        run_kwargs["return_timestamps"] = np.arange(0, total_time + output_step, output_step)
+                        run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
 
                 series = vector_compiler.simulate(
                     parameter_overrides=overrides,
@@ -667,13 +672,14 @@ async def optimize_model(
         run_kwargs = {}
         # TURBO MODE: If only final value is needed, don't collect all intermediate steps
         if config.statistic == "final":
-            run_kwargs["return_timestamps"] = [total_time]
+            run_kwargs["return_timestamps"] = [internal_initial + total_time]
         else:
             # Enforce larger return_timestamps interval (target max 1000 points) to avoid DataFrame overhead in PySD
-            if dt > 0 and total_time / dt > 1000:
-                steps_per_output = max(1, int((total_time / 1000) / dt))
+            steps = total_time / dt if dt > 0 else 0
+            if steps > 1000:
+                steps_per_output = max(1, round((total_time / 1000) / dt))
                 output_step = steps_per_output * dt
-                run_kwargs["return_timestamps"] = np.arange(0, total_time + output_step, output_step)
+                run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
 
         results = wrapper.run(
             overrides=overrides,
