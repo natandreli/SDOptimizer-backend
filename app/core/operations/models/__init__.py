@@ -104,7 +104,7 @@ async def get_all_models(session_id: str) -> list[GetModelResponse]:
             except Exception:
                 pass
 
-        # SLOW PATH: Parse model and cache it
+        #  Parse model and cache it
         try:
             reader = PySDModelReader(file_path)
             info, _ = reader.read()
@@ -172,20 +172,16 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             reader = PySDModelReader(parse_tmp_file)
             info, _ = reader.read()
             
-            # Persist the model directory
             model_dir = uploads_dir / model_id
             model_dir.mkdir(parents=True, exist_ok=True)
 
-            # 1. Save the original .mdl file
             file_path = model_dir / file.filename
             file_path.write_bytes(content)
 
-            # 2. Persist the generated .py file (crucial for performance)
             py_tmp_file = parse_tmp_file.with_suffix(".py")
             if py_tmp_file.exists():
                 shutil.copy(py_tmp_file, model_dir / py_tmp_file.name)
 
-            # 3. Cache the metadata JSON
             info.uploaded_at = datetime.now(timezone.utc).isoformat()
             info_path = model_dir / "info.json"
             info_path.write_text(info.model_dump_json())
@@ -460,7 +456,8 @@ def get_optimization_options(
         directions=["maximize", "minimize"],
         defaults=OptimizationDefaultsSchema(
             dt=suggested_dt,
-            total_time=suggested_total_time
+            total_time=suggested_total_time,
+            time_unit=info.time_unit,
         ),
     )
 
@@ -495,9 +492,28 @@ def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsS
             )
         )
 
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
+
+        duration = internal_final - internal_initial
+        if duration <= 0:
+            duration = 100.0
+            
+        suggested_total_time = duration
+        suggested_dt = internal_dt if internal_dt > 0 else 0.25
+    except Exception:
+        suggested_total_time = 100.0
+        suggested_dt = 0.25
+
     return SimulationOptionsSchema(
         parameters=parameters,
-        defaults=SimulationDefaultsSchema(),
+        defaults=SimulationDefaultsSchema(
+            dt=suggested_dt,
+            total_time=suggested_total_time,
+            time_unit=info.time_unit,
+        ),
     )
 
 

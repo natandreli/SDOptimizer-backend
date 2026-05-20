@@ -113,6 +113,10 @@ class PySDModelReader:
                 "time_step",
                 "saveper",
             }:
+                if py_name == "time_step":
+                    info.time_unit = self._to_str(row.get("Units"))
+                elif py_name == "final_time" and not info.time_unit:
+                    info.time_unit = self._to_str(row.get("Units"))
                 continue
 
             unit = self._to_str(row.get("Units"))

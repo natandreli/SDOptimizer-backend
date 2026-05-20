@@ -57,6 +57,7 @@ class SimulationParameterOptionSchema(BaseModel):
 class SimulationDefaultsSchema(BaseModel):
     dt: float = 0.25
     total_time: float = 100.0
+    time_unit: str = ""
 
 
 class SimulationOptionsSchema(BaseModel):

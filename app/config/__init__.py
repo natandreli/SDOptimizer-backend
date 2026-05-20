@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # Paths
     BASE_DIR: Path = Path(__file__).parent.parent.parent
-    TEMP_DIR: Path = BASE_DIR / "app" / "temp"  # User-generated (temporary)
+    TEMP_DIR: Path = BASE_DIR / "app" / "temp"
 
     # Model validation
     MAX_MODEL_FILE_SIZE: int = 50 * 1024 * 1024  # 50 MB

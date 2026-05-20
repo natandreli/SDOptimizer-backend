@@ -35,6 +35,7 @@ class OptimizationDefaultsSchema(BaseModel):
     direction: Literal["maximize", "minimize"] = "maximize"
     dt: Optional[float] = None
     total_time: Optional[float] = None
+    time_unit: str = ""
 
 
 class OptimizationOptionsSchema(BaseModel):
