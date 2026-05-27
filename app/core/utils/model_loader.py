@@ -1,11 +1,16 @@
+from __future__ import annotations
+
+import pysd
+
 from app.config import settings
 from app.core.readers.pysd_model_reader import PySDModelReader
 from app.exceptions import ModelParseException
+from app.schemas.models import ModelSchema
 
 
-def load_model(session_id: str, model_id: str) -> tuple[str, list[dict]]:
+def load_model(session_id: str, model_id: str) -> tuple[str, ModelSchema, pysd.PySD]:
     """
-    Load model file path and parameter metadata for a given model.
+    Load model file path, metadata and PySD model object.
 
     Args:
         session_id: Current session identifier.
@@ -14,7 +19,8 @@ def load_model(session_id: str, model_id: str) -> tuple[str, list[dict]]:
     Returns:
         Tuple containing:
             - model_path: Path to the .mdl file
-            - parameters: List of parameter metadata dictionaries
+            - info: Full ModelSchema containing stocks, flows, parameters, etc.
+            - pysd_model: The loaded PySD model object.
 
     Raises:
         ModelParseException: If model or file cannot be found or parsed.
@@ -36,15 +42,28 @@ def load_model(session_id: str, model_id: str) -> tuple[str, list[dict]]:
 
     file_path = mdl_files[0]
 
+    # FAST PATH: Check for cached metadata
+    info_path = model_dir / "info.json"
+    info = None
+    if info_path.exists():
+        try:
+            info = ModelSchema.model_validate_json(info_path.read_text())
+        except Exception:
+            pass
+
     try:
         reader = PySDModelReader(file_path)
-        info = reader.read()
+        if info:
+            # If we have info, we only need the PySD model object
+            pysd_model = reader.load()
+        else:
+            # If no cached info, read and cache it now
+            info, pysd_model = reader.read()
+            info_path.write_text(info.model_dump_json())
     except Exception as e:
         raise ModelParseException(
             filename=file_path.name,
-            reason=f"Failed to read model metadata: {str(e)}",
+            reason=f"Failed to load model: {str(e)}",
         )
 
-    parameters = [p.model_dump() for p in info.parameters]
-
-    return str(file_path), parameters
+    return str(file_path), info, pysd_model

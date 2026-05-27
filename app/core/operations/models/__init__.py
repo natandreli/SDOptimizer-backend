@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 import uuid
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import UploadFile
 
-from app.api.routers.models.response_schemas import (
+from app.schemas.models import (
     GetModelResponse,
+    ModelSchema,
+    ModelVariableSchema,
     UploadModelResponse,
 )
 from app.config import settings
@@ -20,7 +24,6 @@ from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.core.utils.model_loader import load_model
 from app.exceptions import ModelParseException, SimulationException
-from app.schemas.models import ModelSchema, ModelVariableSchema
 from app.schemas.optimizer import (
     OptimizationConfigSchema,
     OptimizationConfigSummarySchema,
@@ -86,32 +89,33 @@ async def get_all_models(session_id: str) -> list[GetModelResponse]:
             continue
         seen_file_names.add(file_path.name)
 
+        # FAST PATH: Check if we have cached metadata
+        info_path = model_dir / "info.json"
+        if info_path.exists():
+            try:
+                info = ModelSchema.model_validate_json(info_path.read_text())
+                models.append(
+                    GetModelResponse(
+                        model_id=model_dir.name,
+                        model=info,
+                    )
+                )
+                continue
+            except Exception:
+                pass
+
+        #  Parse model and cache it
         try:
             reader = PySDModelReader(file_path)
-            info = reader.read()
+            info, _ = reader.read()
 
-            model = ModelSchema(
-                file_name=file_path.name,
-                uploaded_at=datetime.fromtimestamp(
-                    file_path.stat().st_mtime,
-                    tz=timezone.utc,
-                ).isoformat(),
-                parsed_with="pysd",
-                format=info.format,
-                stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
-                flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
-                parameters=[
-                    ModelVariableSchema(**v.model_dump()) for v in info.parameters
-                ],
-                auxiliaries=[
-                    ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries
-                ],
-            )
+            # Cache metadata for next time
+            info_path.write_text(info.model_dump_json())
 
             models.append(
                 GetModelResponse(
                     model_id=model_dir.name,
-                    model=model,
+                    model=info,
                 )
             )
         except Exception:
@@ -166,33 +170,31 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             parse_tmp_file = Path(tmp_dir) / file.filename
             parse_tmp_file.write_bytes(content)
             reader = PySDModelReader(parse_tmp_file)
-            info = reader.read()
+            info, _ = reader.read()
+            
+            model_dir = uploads_dir / model_id
+            model_dir.mkdir(parents=True, exist_ok=True)
+
+            file_path = model_dir / file.filename
+            file_path.write_bytes(content)
+
+            py_tmp_file = parse_tmp_file.with_suffix(".py")
+            if py_tmp_file.exists():
+                shutil.copy(py_tmp_file, model_dir / py_tmp_file.name)
+
+            info.uploaded_at = datetime.now(timezone.utc).isoformat()
+            info_path = model_dir / "info.json"
+            info_path.write_text(info.model_dump_json())
+
     except Exception as e:
         raise ModelParseException(
             filename=file.filename,
             reason=str(e),
         )
 
-    model_dir = uploads_dir / model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = model_dir / file.filename
-    file_path.write_bytes(content)
-
-    model = ModelSchema(
-        file_name=file.filename,
-        uploaded_at=datetime.now(timezone.utc).isoformat(),
-        parsed_with="pysd",
-        format=info.format,
-        stocks=[ModelVariableSchema(**v.model_dump()) for v in info.stocks],
-        flows=[ModelVariableSchema(**v.model_dump()) for v in info.flows],
-        parameters=[ModelVariableSchema(**v.model_dump()) for v in info.parameters],
-        auxiliaries=[ModelVariableSchema(**v.model_dump()) for v in info.auxiliaries],
-    )
-
     return UploadModelResponse(
         model_id=model_id,
-        model=model,
+        model=info,
     )
 
 
@@ -267,13 +269,102 @@ async def simulate_model(
             reason=str(e),
         )
 
-    try:
-        simulator = PySDSimulator(pysd_model, config)
-        result = simulator.simulate()
-    except SimulationException:
-        raise
-    except Exception as e:
-        raise SimulationException(reason=str(e))
+    # Resolve total_time / final_time from the payload, falling back to model defaults
+    resolved_total_time = config.final_time if config.final_time is not None else config.total_time
+    if resolved_total_time is None:
+        try:
+            resolved_total_time = float(pysd_model.components.final_time())
+        except Exception:
+            resolved_total_time = 100.0
+    config.total_time = resolved_total_time
+
+    # Resolve dt from the payload, falling back to model defaults
+    if config.dt is None:
+        try:
+            config.dt = float(pysd_model.components.time_step())
+        except Exception:
+            config.dt = 0.25
+
+    start_time = time.perf_counter()
+    result = None
+    compiler_success = False
+
+    py_files = list(model_dir.glob("*.py"))
+    if py_files:
+        try:
+            from app.core.compiler.vector_compiler import VectorModelCompiler
+            compiler = VectorModelCompiler(py_files[0], pysd_model)
+            compiler.compile()
+            
+            # Determine output recording timestamps
+            total_time = config.total_time
+            dt = config.dt
+            if total_time / dt > 1000:
+                steps_per_output = max(1, int((total_time / 1000) / dt))
+                output_step = steps_per_output * dt
+            else:
+                output_step = dt
+            return_timestamps = np.arange(0, total_time + output_step, output_step)
+            
+            series = compiler.simulate(
+                parameter_overrides=config.parameter_overrides,
+                dt=config.dt,
+                total_time=config.total_time,
+                return_timestamps=return_timestamps,
+                return_columns=config.return_columns,
+            )
+            
+            time_list = series.pop("time")
+            series["time"] = time_list
+            
+            parameter_names = set(compiler.constants)
+            parameter_series = {
+                name: values
+                for name, values in series.items()
+                if name in parameter_names and name != "time"
+            }
+            variable_series = {
+                name: values
+                for name, values in series.items()
+                if name not in parameter_names and name != "time"
+            }
+            
+            summary_stats = {}
+            for name, values in series.items():
+                if name != "time" and values:
+                    arr = np.array(values, dtype=float)
+                    summary_stats[name] = {
+                        "mean": float(np.nanmean(arr)),
+                        "min": float(np.nanmin(arr)),
+                        "max": float(np.nanmax(arr)),
+                        "final": float(arr[-1]),
+                        "initial": float(arr[0]),
+                    }
+                    
+            result = SimulationResultSchema(
+                time_series=variable_series,
+                parameter_series=parameter_series,
+                summary_stats=summary_stats,
+                steps_executed=int(config.total_time / config.dt) if config.dt and config.total_time else 1,
+                config=config,
+            )
+            compiler_success = True
+            print(f"DEBUG: Simulation for model {model_id} executed with Dynamic Vector Compiler (MIT)!")
+        except Exception as e:
+            print(f"DEBUG: Dynamic Vector Compiler simulation failed: {e}. Falling back to PySD.")
+
+    if not compiler_success:
+        try:
+            simulator = PySDSimulator(pysd_model, config)
+            result = simulator.simulate()
+        except SimulationException:
+            raise
+        except Exception as e:
+            raise SimulationException(reason=str(e))
+        finally:
+            end_time = time.perf_counter()
+            duration_ms = (end_time - start_time) * 1000
+            print(f"DEBUG: Simulation for model {model_id} took {duration_ms:.2f}ms")
 
     return result
 
@@ -313,16 +404,7 @@ def get_optimization_options(
         ModelParseException: If the model cannot be read.
         SimulationException: If the simulation fails.
     """
-    model_path, _ = load_model(session_id, model_id)
-
-    try:
-        reader = PySDModelReader(model_path)
-        info = reader.read()
-    except Exception as e:
-        raise ModelParseException(
-            filename=model_id,
-            reason=f"Failed to read model metadata: {str(e)}",
-        )
+    _, info, _ = load_model(session_id, model_id)
 
     parameters: list[OptimizationParameterOptionSchema] = []
     for parameter in info.parameters:
@@ -344,12 +426,39 @@ def get_optimization_options(
         variable.name for variable in (info.stocks + info.flows + info.auxiliaries)
     ]
 
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.01) or 0.01)
+        
+        duration = internal_final - internal_initial
+        if duration <= 0:
+            duration = 100.0
+            
+        suggested_total_time = duration
+        
+        # AGGRESSIVE OPTIMIZATION: Target 100 steps for the optimization loop
+        # 500 runs * 100 steps = 50,000 operations (Should take ~20-30s)
+        actual_steps = duration / internal_dt if internal_dt > 0 else 0
+        if actual_steps > 200:
+            suggested_dt = duration / 100.0
+        else:
+            suggested_dt = internal_dt if internal_dt > 0 else (duration / 100.0)
+            
+    except Exception:
+        suggested_total_time = 100.0
+        suggested_dt = 0.25
+
     return OptimizationOptionsSchema(
         parameters=parameters,
         target_variables=target_variables,
         statistics=["final", "mean", "max", "min"],
         directions=["maximize", "minimize"],
-        defaults=OptimizationDefaultsSchema(),
+        defaults=OptimizationDefaultsSchema(
+            dt=suggested_dt,
+            total_time=suggested_total_time,
+            time_unit=info.time_unit,
+        ),
     )
 
 
@@ -367,16 +476,7 @@ def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsS
     Raises:
         ModelParseException: If the model cannot be read.
     """
-    model_path, _ = load_model(session_id, model_id)
-
-    try:
-        reader = PySDModelReader(model_path)
-        info = reader.read()
-    except Exception as e:
-        raise ModelParseException(
-            filename=model_id,
-            reason=f"Failed to read model metadata: {str(e)}",
-        )
+    _, info, _ = load_model(session_id, model_id)
 
     parameters: list[SimulationParameterOptionSchema] = []
     for parameter in info.parameters:
@@ -392,9 +492,28 @@ def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsS
             )
         )
 
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
+
+        duration = internal_final - internal_initial
+        if duration <= 0:
+            duration = 100.0
+            
+        suggested_total_time = duration
+        suggested_dt = internal_dt if internal_dt > 0 else 0.25
+    except Exception:
+        suggested_total_time = 100.0
+        suggested_dt = 0.25
+
     return SimulationOptionsSchema(
         parameters=parameters,
-        defaults=SimulationDefaultsSchema(),
+        defaults=SimulationDefaultsSchema(
+            dt=suggested_dt,
+            total_time=suggested_total_time,
+            time_unit=info.time_unit,
+        ),
     )
 
 
@@ -420,12 +539,41 @@ async def optimize_model(
         SimulationException: If simulation execution fails.
     """
 
-    model_path, parameters = load_model(session_id, model_id)
+    pysd_model_path, info, pysd_model = load_model(session_id, model_id)
+    parameters = [p.model_dump() for p in info.parameters]
 
     wrapper = PySDParser(
-        model_path=model_path,
+        model_path_or_obj=pysd_model,
         parameters=parameters,
     )
+
+    # --- Optimization Time Settings ---
+    dt = config.dt
+    total_time = config.final_time if config.final_time is not None else config.total_time
+
+    internal_initial = 0.0
+    internal_final = 100.0
+    internal_dt = 1.0
+
+    try:
+        internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
+        internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
+        internal_dt = float(info.raw_equations.get("TIME STEP", 0.25) or 0.25)
+    except Exception:
+        pass
+
+    duration = internal_final - internal_initial
+    if duration <= 0: 
+        duration = 100.0
+
+    if total_time is None: 
+        total_time = duration
+
+    if dt is None:
+        # Preserve the internal timestep for mathematical fidelity.
+        # We will optimize performance by reducing return_timestamps (output density) 
+        # instead of the mathematical integration step.
+        dt = internal_dt if internal_dt > 0 else 1.0
 
     def objective_fn(df):
         if config.target_variable not in df.columns:
@@ -446,6 +594,17 @@ async def optimize_model(
 
         return value if config.direction == "maximize" else -value
 
+    vector_compiler = None
+    model_dir = settings.TEMP_DIR / session_id / "uploads" / model_id
+    py_files = list(model_dir.glob("*.py"))
+    if py_files:
+        try:
+            from app.core.compiler.vector_compiler import VectorModelCompiler
+            vector_compiler = VectorModelCompiler(py_files[0], pysd_model).compile()
+            print(f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Vector Compiler (MIT).")
+        except Exception as e:
+            print(f"DEBUG: Dynamic Vector Compiler initialization failed: {e}. Falling back to PySD.")
+
     action_shape = (3,) * len(config.parameter_names)
 
     agent = EGreedyAgent(
@@ -453,10 +612,85 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
+    memo_cache = {}
+    cache_hits = 0
+    cache_misses = 0
+
     def reward_fn(params: list[float]) -> float:
+        nonlocal cache_hits, cache_misses
+        # Round parameters to 8 decimals to prevent tiny precision mismatches
+        key = tuple(round(p, 8) for p in params)
+        if key in memo_cache:
+            cache_hits += 1
+            return memo_cache[key]
+
+        cache_misses += 1
+
+        if vector_compiler is not None:
+            try:
+                overrides = dict(zip(config.parameter_names, params))
+                run_kwargs = {}
+                if config.statistic == "final":
+                    run_kwargs["return_timestamps"] = np.array([internal_initial + total_time])
+                else:
+                    steps = total_time / dt if dt > 0 else 0
+                    if steps > 1000:
+                        # Subsample output to max 1000 points without modifying the integration `dt`
+                        steps_per_output = max(1, round((total_time / 1000) / dt))
+                        output_step = steps_per_output * dt
+                        run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
+
+                series = vector_compiler.simulate(
+                    parameter_overrides=overrides,
+                    dt=dt,
+                    total_time=total_time,
+                    return_columns=[config.target_variable],
+                    **run_kwargs
+                )
+                vals = series[config.target_variable]
+                if not vals:
+                    raise ValueError(f"Variable '{config.target_variable}' returned empty trajectory in Vector Compiler.")
+
+                if config.statistic == "final":
+                    value = float(vals[-1])
+                elif config.statistic == "mean":
+                    value = float(np.mean(vals))
+                elif config.statistic == "max":
+                    value = float(np.max(vals))
+                elif config.statistic == "min":
+                    value = float(np.min(vals))
+                else:
+                    raise ValueError(f"Unknown statistic: {config.statistic}")
+
+                score = value if config.direction == "maximize" else -value
+                memo_cache[key] = score
+                return score
+            except Exception as e:
+                print(f"DEBUG: Dynamic Vector Compiler simulation error: {e}. Falling back dynamically to PySD for this trial.")
+
         overrides = dict(zip(config.parameter_names, params))
-        results = wrapper.run(overrides)
-        return objective_fn(results)
+        run_kwargs = {}
+        # TURBO MODE: If only final value is needed, don't collect all intermediate steps
+        if config.statistic == "final":
+            run_kwargs["return_timestamps"] = [internal_initial + total_time]
+        else:
+            # Enforce larger return_timestamps interval (target max 1000 points) to avoid DataFrame overhead in PySD
+            steps = total_time / dt if dt > 0 else 0
+            if steps > 1000:
+                steps_per_output = max(1, round((total_time / 1000) / dt))
+                output_step = steps_per_output * dt
+                run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
+
+        results = wrapper.run(
+            overrides=overrides,
+            return_columns=[config.target_variable],
+            dt=dt,
+            total_time=total_time,
+            **run_kwargs
+        )
+        score = objective_fn(results)
+        memo_cache[key] = score
+        return score
 
     # Compute baseline score with initial parameters
     try:
@@ -474,10 +708,16 @@ async def optimize_model(
         max_runs=config.max_runs,
     )
 
+    start_time = time.perf_counter()
     try:
         best_params, best_score = optimizer.optimize()
     except Exception as e:
         raise SimulationException(reason=f"Optimization execution failed: {str(e)}")
+    finally:
+        end_time = time.perf_counter()
+        duration_ms = (end_time - start_time) * 1000
+        print(f"DEBUG: Optimization for model {model_id} took {duration_ms:.2f}ms")
+        print(f"DEBUG: Memoization Cache Stats - Hits: {cache_hits}, Misses: {cache_misses}")
 
     history = optimizer.get_history()
 
@@ -528,6 +768,9 @@ async def optimize_model(
         epsilon=config.epsilon,
     )
 
+    steps_per_sim = int(total_time / dt) if dt and total_time else 1
+    total_math_steps = config.max_runs * steps_per_sim
+
     return OptimizationResultSchema(
         best_parameters=best_params_dict,
         best_score=final_best_score,
@@ -537,4 +780,6 @@ async def optimize_model(
         improvement_percentage=round(improvement_pct, 4),
         parameter_changes=parameter_changes,
         config_summary=config_summary,
+        steps_per_simulation=steps_per_sim,
+        total_mathematical_steps=total_math_steps,
     )

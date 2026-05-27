@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Tuple, Optional
 
 from pydantic import BaseModel
 
@@ -16,6 +16,10 @@ class OptimizationConfigSchema(BaseModel):
     statistic: Literal["final", "mean", "max", "min"]
     direction: Literal["maximize", "minimize"] = "maximize"
 
+    dt: Optional[float] = None
+    total_time: Optional[float] = None
+    final_time: Optional[float] = None
+
 
 class OptimizationParameterOptionSchema(BaseModel):
     name: str
@@ -29,6 +33,9 @@ class OptimizationDefaultsSchema(BaseModel):
     max_runs: int = 200
     statistic: Literal["final", "mean", "max", "min"] = "max"
     direction: Literal["maximize", "minimize"] = "maximize"
+    dt: Optional[float] = None
+    total_time: Optional[float] = None
+    time_unit: str = ""
 
 
 class OptimizationOptionsSchema(BaseModel):
@@ -69,3 +76,5 @@ class OptimizationResultSchema(BaseModel):
     improvement_percentage: float
     parameter_changes: Dict[str, ParameterChangeSchema]
     config_summary: OptimizationConfigSummarySchema
+    steps_per_simulation: int = 0
+    total_mathematical_steps: int = 0

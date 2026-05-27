@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -21,17 +23,14 @@ class PySDParser:
 
     def __init__(
         self,
-        model_path: str,
+        model_path_or_obj: str | pysd.PySD,
         parameters: List[Dict[str, Any]],
     ) -> None:
         """
         Initialize the wrapper by loading the model and configuring parameter mappings.
 
         Args:
-            model_path: Path to the model file. Supported formats:
-                - .mdl (Vensim model)
-                - .py (PySD-translated model)
-
+            model_path_or_obj: Path to the model file (.mdl or .py) or an already loaded pysd.PySD object.
             parameters: List of parameter metadata dictionaries. Each dictionary must contain:
                 - "name" (str): Original parameter name
                 - "initial_value" (float): Default value for simulation
@@ -42,10 +41,12 @@ class PySDParser:
             FileNotFoundError: If the model file does not exist.
             ValueError: If required parameter fields are missing.
         """
-        if model_path.lower().endswith(".mdl"):
-            self.model = pysd.read_vensim(model_path)
+        if hasattr(model_path_or_obj, "run"):
+            self.model = model_path_or_obj
+        elif str(model_path_or_obj).lower().endswith(".mdl"):
+            self.model = pysd.read_vensim(str(model_path_or_obj))
         else:
-            self.model = pysd.load(model_path)
+            self.model = pysd.load(str(model_path_or_obj))
 
         self.original_parameters = parameters
 
@@ -65,7 +66,29 @@ class PySDParser:
             for p in parameters
         }
 
-    def run(self, overrides: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+        # Identify all stateful variables (stocks) in the model doc to handle stock initial overrides dynamically
+        self.stateful_vars: Dict[str, str] = {}
+        try:
+            doc = self.model.doc
+            if doc is not None and not doc.empty:
+                for _, row in doc.iterrows():
+                    element_type = str(row.get("Type", "")).strip().lower()
+                    if element_type == "stateful":
+                        real_name = str(row.get("Real Name", "")).strip()
+                        py_name = str(row.get("Py Name", "")).strip()
+                        self.stateful_vars[real_name] = py_name
+                        self.stateful_vars[py_name] = py_name
+        except Exception:
+            pass
+
+    def run(
+        self, 
+        overrides: Optional[Dict[str, float]] = None, 
+        return_columns: Optional[List[str]] = None,
+        dt: Optional[float] = None,
+        total_time: Optional[float] = None,
+        **run_kwargs,
+    ) -> pd.DataFrame:
         """
         Execute the simulation with optional parameter overrides.
 
@@ -83,21 +106,53 @@ class PySDParser:
             ValueError: If any parameter is invalid or out of bounds.
         """
         params = self.initial_values.copy()
+        stock_overrides = {}
 
         if overrides:
             self.validate_overrides(overrides)
             for name, value in overrides.items():
                 if not np.isfinite(value):
                     raise ValueError(f"'{name}' has invalid value: {value}")
+                
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
-                params[pysd_name] = value
+                
+                # Check if this name refers to a stateful variable (stock)
+                if name in self.stateful_vars or pysd_name in self.stateful_vars:
+                    # Map to the proper Py Name for PySD to accept it
+                    key = self.stateful_vars.get(name, self.stateful_vars.get(pysd_name, pysd_name))
+                    stock_overrides[key] = value
+                else:
+                    params[pysd_name] = value
 
-        return self.model.run(
-            params=params,
-            time_step=0.1,
-            final_time=400,
-            return_timestamps=np.arange(0, 400, 1),
-        )
+        full_kwargs = {
+            "params": params,
+        }
+        # Merge extra run kwargs (e.g. return_timestamps from Turbo Mode)
+        full_kwargs.update(run_kwargs)
+
+        if stock_overrides:
+            # Pass custom stock overrides via initial_condition!
+            full_kwargs["initial_condition"] = (0, stock_overrides)
+
+        if dt is not None and total_time is not None:
+            # Only generate default timestamps if not already provided
+            if "return_timestamps" not in full_kwargs:
+                full_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
+        
+        if return_columns is not None:
+            full_kwargs["return_columns"] = return_columns
+
+        # Override integration step size in PySD's components.Time manager to enforce user's input dt.
+        # This drastically reduces the number of steps and solves the PySD simulation speed bottleneck!
+        original_time_step_func = getattr(self.model.time, "time_step", None)
+        if dt is not None:
+            self.model.time.time_step = lambda: dt
+
+        try:
+            return self.model.run(**full_kwargs)
+        finally:
+            if original_time_step_func is not None:
+                self.model.time.time_step = original_time_step_func
 
     def validate_overrides(self, overrides: Dict[str, float]) -> None:
         """
@@ -113,6 +168,10 @@ class PySDParser:
         """
         for name, value in overrides.items():
             pysd_name = self.params_map.get(name, name.replace(" ", "_"))
+
+            # If it's a stateful variable (stock), it is valid!
+            if name in self.stateful_vars or pysd_name in self.stateful_vars:
+                continue
 
             if pysd_name not in self.param_bounds:
                 raise ValueError(f"Unknown parameter: '{name}'")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,21 +18,33 @@ class SimulationConfigSchema(BaseModel):
         }
     )
 
-    dt: float = Field(
-        default=0.25,
+    dt: Optional[float] = Field(
+        default=None,
         gt=0,
         description="Time step for Euler integration.",
     )
-    total_time: float = Field(
-        default=100.0,
+    total_time: Optional[float] = Field(
+        default=None,
         gt=0,
         description="Total simulation time.",
+    )
+    final_time: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Final simulation time.",
     )
     parameter_overrides: Dict[str, float] = Field(
         default_factory=dict,
         description=(
             "Override parameter values. Keys are parameter real names "
             "(e.g. 'cash revenue'), values are the new numeric values."
+        ),
+    )
+    return_columns: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "List of variable names to return in the results. "
+            "If None, all model variables are returned."
         ),
     )
 
@@ -45,6 +57,7 @@ class SimulationParameterOptionSchema(BaseModel):
 class SimulationDefaultsSchema(BaseModel):
     dt: float = 0.25
     total_time: float = 100.0
+    time_unit: str = ""
 
 
 class SimulationOptionsSchema(BaseModel):

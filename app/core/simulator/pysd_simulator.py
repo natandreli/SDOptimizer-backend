@@ -22,17 +22,64 @@ class PySDSimulator:
         Returns:
             SimulationResultSchema container with results.
         """
-        return_timestamps = np.arange(
-            0, self.config.total_time + self.config.dt, self.config.dt
-        )
-        params = (
-            self.config.parameter_overrides if self.config.parameter_overrides else None
-        )
-        df = self.model.run(
-            params=params,
-            return_columns=None,
-            return_timestamps=return_timestamps,
-        )
+        # Determine output recording interval (target around 5000 points max for smooth chart rendering and zero JSON overhead)
+        total_time = self.config.total_time
+        dt = self.config.dt
+        
+        if dt > 0 and total_time / dt > 1000:
+            steps_per_output = max(1, round((total_time / 1000) / dt))
+            output_step = steps_per_output * dt
+        else:
+            output_step = dt
+
+        return_timestamps = np.arange(0, total_time + output_step, output_step)
+        # Identify all stateful variables (stocks) in the model doc to handle stock initial overrides dynamically
+        stateful_vars: dict[str, str] = {}
+        try:
+            doc = self.model.doc
+            if doc is not None and not doc.empty:
+                for _, row in doc.iterrows():
+                    element_type = str(row.get("Type", "")).strip().lower()
+                    if element_type == "stateful":
+                        real_name = str(row.get("Real Name", "")).strip()
+                        py_name = str(row.get("Py Name", "")).strip()
+                        stateful_vars[real_name] = py_name
+                        stateful_vars[py_name] = py_name
+        except Exception:
+            pass
+
+        params = {}
+        stock_overrides = {}
+        if self.config.parameter_overrides:
+            for k, v in self.config.parameter_overrides.items():
+                pysd_name = k.replace(" ", "_")
+                if k in stateful_vars or pysd_name in stateful_vars:
+                    # Map to the proper Py Name for PySD to accept it
+                    key = stateful_vars.get(k, stateful_vars.get(pysd_name, pysd_name))
+                    stock_overrides[key] = v
+                else:
+                    params[k] = v
+
+        # Override integration step size in PySD's components.Time manager to enforce the user's requested step size.
+        original_time_step_func = getattr(self.model.time, "time_step", None)
+        if self.config.dt is not None:
+            self.model.time.time_step = lambda: self.config.dt
+
+        run_kwargs = {}
+        if stock_overrides:
+            # Pass custom stock overrides via initial_condition!
+            run_kwargs["initial_condition"] = (0, stock_overrides)
+
+        try:
+            df = self.model.run(
+                params=params if params else None,
+                return_columns=self.config.return_columns,
+                return_timestamps=return_timestamps,
+                **run_kwargs
+            )
+        finally:
+            if original_time_step_func is not None:
+                self.model.time.time_step = original_time_step_func
         time_series = {col: df[col].tolist() for col in df.columns}
         time_list = df.index.tolist()
         time_series.pop("Time", None)

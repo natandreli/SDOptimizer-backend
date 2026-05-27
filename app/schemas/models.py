@@ -40,6 +40,7 @@ class ModelSchema(BaseModel):
     flows: List[ModelVariableSchema] = Field(default_factory=list)
     parameters: List[ModelVariableSchema] = Field(default_factory=list)
     auxiliaries: List[ModelVariableSchema] = Field(default_factory=list)
+    time_unit: str = ""
     raw_equations: Dict[str, str] = Field(default_factory=dict, exclude=True)
 
     @property
@@ -66,4 +67,15 @@ class ModelSchema(BaseModel):
             "flows": [v.model_dump() for v in self.flows],
             "parameters": [v.model_dump() for v in self.parameters],
             "auxiliaries": [v.model_dump() for v in self.auxiliaries],
+            "time_unit": self.time_unit,
         }
+
+
+class UploadModelResponse(BaseModel):
+    model_id: str
+    model: Optional[ModelSchema] = None
+
+
+class GetModelResponse(BaseModel):
+    model_id: str
+    model: Optional[ModelSchema] = None
