@@ -94,7 +94,7 @@ class PySDModelReader:
             return info, model
 
         component_module = model.components._components
-        
+
         # PRE-EXTRACTION: Get all source code once to avoid slow inspect.getsource calls in loops
         source_map = self._extract_source_map(component_module)
         flow_py_names = self._detect_flow_py_names(source_map)
@@ -170,7 +170,7 @@ class PySDModelReader:
         for stock_var in info.stocks:
             py_name = real_to_py.get(stock_var.name, "")
             integ_name = f"_integ_{py_name}"
-            
+
             eq_str = source_map.get(integ_name, "")
             if not eq_str:
                 eq_str = info.raw_equations.get(stock_var.name, stock_var.equation)
@@ -197,23 +197,28 @@ class PySDModelReader:
         Returns a mapping from py_name to the return expression.
         """
         import ast
+
         source_map = {}
         try:
             # Get source of the components module
             source = inspect.getsource(component_module)
             tree = ast.parse(source)
-            
+
             # Walk the AST to extract function return expressions and stock Integ definitions
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     for body_node in node.body:
                         if isinstance(body_node, ast.Return):
                             if body_node.value is not None:
-                                source_map[node.name] = ast.unparse(body_node.value).strip()
+                                source_map[node.name] = ast.unparse(
+                                    body_node.value
+                                ).strip()
                             break
                 elif isinstance(node, ast.Assign):
                     for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id.startswith("_integ_"):
+                        if isinstance(target, ast.Name) and target.id.startswith(
+                            "_integ_"
+                        ):
                             source_map[target.id] = ast.unparse(node.value).strip()
         except Exception:
             pass

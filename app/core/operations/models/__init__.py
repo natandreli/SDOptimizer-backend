@@ -4,18 +4,12 @@ import shutil
 import tempfile
 import time
 import uuid
-import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 from fastapi import UploadFile
 
-from app.schemas.models import (
-    GetModelResponse,
-    ModelSchema,
-    ModelVariableSchema,
-    UploadModelResponse,
-)
 from app.config import settings
 from app.core.agent.e_greedy_agent import EGreedyAgent
 from app.core.optimizer.model_optimizer import ModelOptimizer
@@ -24,6 +18,11 @@ from app.core.readers.pysd_parser import PySDParser
 from app.core.simulator.pysd_simulator import PySDSimulator
 from app.core.utils.model_loader import load_model
 from app.exceptions import ModelParseException, SimulationException
+from app.schemas.models import (
+    GetModelResponse,
+    ModelSchema,
+    UploadModelResponse,
+)
 from app.schemas.optimizer import (
     OptimizationConfigSchema,
     OptimizationConfigSummarySchema,
@@ -171,7 +170,7 @@ async def upload_mdl_file(file: UploadFile, session_id: str) -> UploadModelRespo
             parse_tmp_file.write_bytes(content)
             reader = PySDModelReader(parse_tmp_file)
             info, _ = reader.read()
-            
+
             model_dir = uploads_dir / model_id
             model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -270,7 +269,9 @@ async def simulate_model(
         )
 
     # Resolve total_time / final_time from the payload, falling back to model defaults
-    resolved_total_time = config.final_time if config.final_time is not None else config.total_time
+    resolved_total_time = (
+        config.final_time if config.final_time is not None else config.total_time
+    )
     if resolved_total_time is None:
         try:
             resolved_total_time = float(pysd_model.components.final_time())
@@ -293,9 +294,10 @@ async def simulate_model(
     if py_files:
         try:
             from app.core.compiler.vector_compiler import VectorModelCompiler
+
             compiler = VectorModelCompiler(py_files[0], pysd_model)
             compiler.compile()
-            
+
             # Determine output recording timestamps
             total_time = config.total_time
             dt = config.dt
@@ -305,7 +307,7 @@ async def simulate_model(
             else:
                 output_step = dt
             return_timestamps = np.arange(0, total_time + output_step, output_step)
-            
+
             series = compiler.simulate(
                 parameter_overrides=config.parameter_overrides,
                 dt=config.dt,
@@ -313,10 +315,10 @@ async def simulate_model(
                 return_timestamps=return_timestamps,
                 return_columns=config.return_columns,
             )
-            
+
             time_list = series.pop("time")
             series["time"] = time_list
-            
+
             parameter_names = set(compiler.constants)
             parameter_series = {
                 name: values
@@ -328,7 +330,7 @@ async def simulate_model(
                 for name, values in series.items()
                 if name not in parameter_names and name != "time"
             }
-            
+
             summary_stats = {}
             for name, values in series.items():
                 if name != "time" and values:
@@ -340,18 +342,24 @@ async def simulate_model(
                         "final": float(arr[-1]),
                         "initial": float(arr[0]),
                     }
-                    
+
             result = SimulationResultSchema(
                 time_series=variable_series,
                 parameter_series=parameter_series,
                 summary_stats=summary_stats,
-                steps_executed=int(config.total_time / config.dt) if config.dt and config.total_time else 1,
+                steps_executed=int(config.total_time / config.dt)
+                if config.dt and config.total_time
+                else 1,
                 config=config,
             )
             compiler_success = True
-            print(f"DEBUG: Simulation for model {model_id} executed with Dynamic Vector Compiler (MIT)!")
+            print(
+                f"DEBUG: Simulation for model {model_id} executed with Dynamic Vector Compiler (MIT)!"
+            )
         except Exception as e:
-            print(f"DEBUG: Dynamic Vector Compiler simulation failed: {e}. Falling back to PySD.")
+            print(
+                f"DEBUG: Dynamic Vector Compiler simulation failed: {e}. Falling back to PySD."
+            )
 
     if not compiler_success:
         try:
@@ -430,13 +438,13 @@ def get_optimization_options(
         internal_initial = float(info.raw_equations.get("INITIAL TIME", 0) or 0)
         internal_final = float(info.raw_equations.get("FINAL TIME", 100) or 100)
         internal_dt = float(info.raw_equations.get("TIME STEP", 0.01) or 0.01)
-        
+
         duration = internal_final - internal_initial
         if duration <= 0:
             duration = 100.0
-            
+
         suggested_total_time = duration
-        
+
         # AGGRESSIVE OPTIMIZATION: Target 100 steps for the optimization loop
         # 500 runs * 100 steps = 50,000 operations (Should take ~20-30s)
         actual_steps = duration / internal_dt if internal_dt > 0 else 0
@@ -444,7 +452,7 @@ def get_optimization_options(
             suggested_dt = duration / 100.0
         else:
             suggested_dt = internal_dt if internal_dt > 0 else (duration / 100.0)
-            
+
     except Exception:
         suggested_total_time = 100.0
         suggested_dt = 0.25
@@ -500,7 +508,7 @@ def get_simulation_options(session_id: str, model_id: str) -> SimulationOptionsS
         duration = internal_final - internal_initial
         if duration <= 0:
             duration = 100.0
-            
+
         suggested_total_time = duration
         suggested_dt = internal_dt if internal_dt > 0 else 0.25
     except Exception:
@@ -521,7 +529,7 @@ async def optimize_model(
     session_id: str,
     model_id: str,
     config: OptimizationConfigSchema,
-) -> OptimizationResultSchema:
+) -> tuple[OptimizationResultSchema, list[OptimizationResultSchema], int, float]:
     """
     Execute ε-greedy multi-armed bandit optimization over a PySD model.
 
@@ -531,7 +539,7 @@ async def optimize_model(
         config: Optimization configuration object
 
     Returns:
-        OptimizationResultSchema with best parameters, best score, and optimization history.
+        Tuple with the best result, all batch results, and the best optimization number.
 
     Raises:
         ModelParseException: If the model cannot be loaded.
@@ -549,7 +557,9 @@ async def optimize_model(
 
     # --- Optimization Time Settings ---
     dt = config.dt
-    total_time = config.final_time if config.final_time is not None else config.total_time
+    total_time = (
+        config.final_time if config.final_time is not None else config.total_time
+    )
 
     internal_initial = 0.0
     internal_final = 100.0
@@ -563,15 +573,15 @@ async def optimize_model(
         pass
 
     duration = internal_final - internal_initial
-    if duration <= 0: 
+    if duration <= 0:
         duration = 100.0
 
-    if total_time is None: 
+    if total_time is None:
         total_time = duration
 
     if dt is None:
         # Preserve the internal timestep for mathematical fidelity.
-        # We will optimize performance by reducing return_timestamps (output density) 
+        # We will optimize performance by reducing return_timestamps (output density)
         # instead of the mathematical integration step.
         dt = internal_dt if internal_dt > 0 else 1.0
 
@@ -600,17 +610,17 @@ async def optimize_model(
     if py_files:
         try:
             from app.core.compiler.vector_compiler import VectorModelCompiler
+
             vector_compiler = VectorModelCompiler(py_files[0], pysd_model).compile()
-            print(f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Vector Compiler (MIT).")
+            print(
+                f"DEBUG: Optimization model {model_id} successfully compiled with Dynamic Vector Compiler (MIT)."
+            )
         except Exception as e:
-            print(f"DEBUG: Dynamic Vector Compiler initialization failed: {e}. Falling back to PySD.")
+            print(
+                f"DEBUG: Dynamic Vector Compiler initialization failed: {e}. Falling back to PySD."
+            )
 
     action_shape = (3,) * len(config.parameter_names)
-
-    agent = EGreedyAgent(
-        action_shape=action_shape,
-        epsilon=config.epsilon,
-    )
 
     memo_cache = {}
     cache_hits = 0
@@ -631,25 +641,33 @@ async def optimize_model(
                 overrides = dict(zip(config.parameter_names, params))
                 run_kwargs = {}
                 if config.statistic == "final":
-                    run_kwargs["return_timestamps"] = np.array([internal_initial + total_time])
+                    run_kwargs["return_timestamps"] = np.array(
+                        [internal_initial + total_time]
+                    )
                 else:
                     steps = total_time / dt if dt > 0 else 0
                     if steps > 1000:
                         # Subsample output to max 1000 points without modifying the integration `dt`
                         steps_per_output = max(1, round((total_time / 1000) / dt))
                         output_step = steps_per_output * dt
-                        run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
+                        run_kwargs["return_timestamps"] = np.arange(
+                            internal_initial,
+                            internal_initial + total_time + output_step,
+                            output_step,
+                        )
 
                 series = vector_compiler.simulate(
                     parameter_overrides=overrides,
                     dt=dt,
                     total_time=total_time,
                     return_columns=[config.target_variable],
-                    **run_kwargs
+                    **run_kwargs,
                 )
                 vals = series[config.target_variable]
                 if not vals:
-                    raise ValueError(f"Variable '{config.target_variable}' returned empty trajectory in Vector Compiler.")
+                    raise ValueError(
+                        f"Variable '{config.target_variable}' returned empty trajectory in Vector Compiler."
+                    )
 
                 if config.statistic == "final":
                     value = float(vals[-1])
@@ -666,7 +684,9 @@ async def optimize_model(
                 memo_cache[key] = score
                 return score
             except Exception as e:
-                print(f"DEBUG: Dynamic Vector Compiler simulation error: {e}. Falling back dynamically to PySD for this trial.")
+                print(
+                    f"DEBUG: Dynamic Vector Compiler simulation error: {e}. Falling back dynamically to PySD for this trial."
+                )
 
         overrides = dict(zip(config.parameter_names, params))
         run_kwargs = {}
@@ -679,14 +699,18 @@ async def optimize_model(
             if steps > 1000:
                 steps_per_output = max(1, round((total_time / 1000) / dt))
                 output_step = steps_per_output * dt
-                run_kwargs["return_timestamps"] = np.arange(internal_initial, internal_initial + total_time + output_step, output_step)
+                run_kwargs["return_timestamps"] = np.arange(
+                    internal_initial,
+                    internal_initial + total_time + output_step,
+                    output_step,
+                )
 
         results = wrapper.run(
             overrides=overrides,
             return_columns=[config.target_variable],
             dt=dt,
             total_time=total_time,
-            **run_kwargs
+            **run_kwargs,
         )
         score = objective_fn(results)
         memo_cache[key] = score
@@ -698,67 +722,11 @@ async def optimize_model(
     except Exception:
         raw_initial_score = 0.0
 
-    optimizer = ModelOptimizer(
-        reward_fn=reward_fn,
-        agent=agent,
-        parameter_names=config.parameter_names,
-        initial_values=config.initial_values,
-        bounds=config.bounds,
-        rho_factors=config.rho_factors,
-        max_runs=config.max_runs,
-    )
-
-    start_time = time.perf_counter()
-    try:
-        best_params, best_score = optimizer.optimize()
-    except Exception as e:
-        raise SimulationException(reason=f"Optimization execution failed: {str(e)}")
-    finally:
-        end_time = time.perf_counter()
-        duration_ms = (end_time - start_time) * 1000
-        print(f"DEBUG: Optimization for model {model_id} took {duration_ms:.2f}ms")
-        print(f"DEBUG: Memoization Cache Stats - Hits: {cache_hits}, Misses: {cache_misses}")
-
-    history = optimizer.get_history()
-
-    # Convert scores back to original scale when minimizing
     initial_score = (
         -raw_initial_score if config.direction == "minimize" else raw_initial_score
     )
-    final_best_score = -best_score if config.direction == "minimize" else best_score
 
-    # Compute improvement percentage
-    if abs(initial_score) > 1e-12:
-        if config.direction == "minimize":
-            improvement_pct = (
-                (initial_score - final_best_score) / abs(initial_score)
-            ) * 100
-        else:
-            improvement_pct = (
-                (final_best_score - initial_score) / abs(initial_score)
-            ) * 100
-    else:
-        improvement_pct = (
-            0.0 if abs(final_best_score - initial_score) < 1e-12 else 100.0
-        )
-
-    # Build per-parameter change info
     initial_params_dict = dict(zip(config.parameter_names, config.initial_values))
-    best_params_dict = dict(zip(config.parameter_names, best_params))
-
-    parameter_changes: dict[str, ParameterChangeSchema] = {}
-    for name in config.parameter_names:
-        init_val = initial_params_dict[name]
-        opt_val = best_params_dict[name]
-        if abs(init_val) > 1e-12:
-            change_pct = ((opt_val - init_val) / abs(init_val)) * 100
-        else:
-            change_pct = 0.0 if abs(opt_val - init_val) < 1e-12 else 100.0
-        parameter_changes[name] = ParameterChangeSchema(
-            initial_value=init_val,
-            optimized_value=opt_val,
-            change_percentage=change_pct,
-        )
 
     config_summary = OptimizationConfigSummarySchema(
         target_variable=config.target_variable,
@@ -771,15 +739,122 @@ async def optimize_model(
     steps_per_sim = int(total_time / dt) if dt and total_time else 1
     total_math_steps = config.max_runs * steps_per_sim
 
-    return OptimizationResultSchema(
-        best_parameters=best_params_dict,
-        best_score=final_best_score,
-        history=OptimizationHistorySchema(**history),
-        initial_parameters=initial_params_dict,
-        initial_score=initial_score,
-        improvement_percentage=round(improvement_pct, 4),
-        parameter_changes=parameter_changes,
-        config_summary=config_summary,
-        steps_per_simulation=steps_per_sim,
-        total_mathematical_steps=total_math_steps,
+    def build_result(
+        optimization_number: int,
+        execution_time_ms: float,
+        best_params: list[float],
+        best_score: float,
+        history: dict,
+    ) -> OptimizationResultSchema:
+        final_best_score = -best_score if config.direction == "minimize" else best_score
+
+        if abs(initial_score) > 1e-12:
+            if config.direction == "minimize":
+                improvement_pct = (
+                    (initial_score - final_best_score) / abs(initial_score)
+                ) * 100
+            else:
+                improvement_pct = (
+                    (final_best_score - initial_score) / abs(initial_score)
+                ) * 100
+        else:
+            improvement_pct = (
+                0.0 if abs(final_best_score - initial_score) < 1e-12 else 100.0
+            )
+
+        best_params_dict = dict(zip(config.parameter_names, best_params))
+        parameter_changes: dict[str, ParameterChangeSchema] = {}
+        for name in config.parameter_names:
+            init_val = initial_params_dict[name]
+            opt_val = best_params_dict[name]
+            if abs(init_val) > 1e-12:
+                change_pct = ((opt_val - init_val) / abs(init_val)) * 100
+            else:
+                change_pct = 0.0 if abs(opt_val - init_val) < 1e-12 else 100.0
+            parameter_changes[name] = ParameterChangeSchema(
+                initial_value=init_val,
+                optimized_value=opt_val,
+                change_percentage=change_pct,
+            )
+
+        return OptimizationResultSchema(
+            optimization_number=optimization_number,
+            execution_time_ms=round(execution_time_ms, 2),
+            best_parameters=best_params_dict,
+            best_score=final_best_score,
+            history=OptimizationHistorySchema(**history),
+            initial_parameters=initial_params_dict,
+            initial_score=initial_score,
+            improvement_percentage=round(improvement_pct, 4),
+            parameter_changes=parameter_changes,
+            config_summary=config_summary,
+            steps_per_simulation=steps_per_sim,
+            total_mathematical_steps=total_math_steps,
+        )
+
+    def is_better_result(
+        candidate: OptimizationResultSchema,
+        current_best: OptimizationResultSchema | None,
+    ) -> bool:
+        if current_best is None:
+            return True
+        if config.direction == "minimize":
+            return candidate.best_score < current_best.best_score
+        return candidate.best_score > current_best.best_score
+
+    batch_results: list[OptimizationResultSchema] = []
+    best_result: OptimizationResultSchema | None = None
+
+    start_time = time.perf_counter()
+    try:
+        for optimization_number in range(1, config.optimization_count + 1):
+            agent = EGreedyAgent(
+                action_shape=action_shape,
+                epsilon=config.epsilon,
+            )
+            optimizer = ModelOptimizer(
+                reward_fn=reward_fn,
+                agent=agent,
+                parameter_names=config.parameter_names,
+                initial_values=config.initial_values,
+                bounds=config.bounds,
+                rho_factors=config.rho_factors,
+                max_runs=config.max_runs,
+            )
+
+            optimization_start_time = time.perf_counter()
+            best_params, best_score = optimizer.optimize()
+            optimization_duration_ms = (
+                time.perf_counter() - optimization_start_time
+            ) * 1000
+            result = build_result(
+                optimization_number=optimization_number,
+                execution_time_ms=optimization_duration_ms,
+                best_params=best_params,
+                best_score=best_score,
+                history=optimizer.get_history(),
+            )
+            batch_results.append(result)
+            if is_better_result(result, best_result):
+                best_result = result
+    except Exception as e:
+        raise SimulationException(reason=f"Optimization execution failed: {str(e)}")
+    finally:
+        end_time = time.perf_counter()
+        duration_ms = (end_time - start_time) * 1000
+        print(
+            f"DEBUG: {config.optimization_count} optimization(s) for model {model_id} took {duration_ms:.2f}ms"
+        )
+        print(
+            f"DEBUG: Memoization Cache Stats - Hits: {cache_hits}, Misses: {cache_misses}"
+        )
+
+    if best_result is None:
+        raise SimulationException(reason="Optimization execution produced no results.")
+
+    return (
+        best_result,
+        batch_results,
+        best_result.optimization_number,
+        round(duration_ms, 2),
     )

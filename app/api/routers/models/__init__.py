@@ -151,12 +151,22 @@ async def handle_optimize(
     try:
         session_id = request.state.session_id
         print(f"Starting optimization for model {model_id} in session: {session_id}")
-        result = await optimize_model(
+        (
+            result,
+            results,
+            best_optimization_number,
+            total_execution_time_ms,
+        ) = await optimize_model(
             session_id=session_id,
             model_id=model_id,
             config=config,
         )
-        return OptimizationResponse(result=result)
+        return OptimizationResponse(
+            result=result,
+            results=results,
+            best_optimization_number=best_optimization_number,
+            total_execution_time_ms=total_execution_time_ms,
+        )
 
     except ModelParseException as e:
         raise HTTPException(

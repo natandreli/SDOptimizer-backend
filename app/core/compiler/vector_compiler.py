@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import ast
 import logging
 from pathlib import Path
+
 import numpy as np
 import pysd
 
@@ -10,13 +12,14 @@ logger = logging.getLogger("vector_compiler")
 
 class VectorCompilationError(Exception):
     """Raised when AST compilation or execution fails."""
+
     pass
 
 
 class VectorModelCompiler:
     """
     Dynamic Vensim-to-NumPy Vectorised Compiler
-    
+
     Translates PySD models into pure NumPy mathematical integration loops.
     """
 
@@ -45,7 +48,7 @@ class VectorModelCompiler:
     def _initialize_mappings(self) -> None:
         """Extract stocks, constants, and auxiliaries from doc and establish mappings."""
         doc = self.doc
-        
+
         self.stocks = doc[doc["Type"] == "Stateful"]["Py Name"].tolist()
         self.constants = doc[doc["Type"] == "Constant"]["Py Name"].tolist()
         self.auxiliaries = doc[doc["Type"] == "Auxiliary"]["Py Name"].tolist()
@@ -71,7 +74,7 @@ class VectorModelCompiler:
             with open(self.model_py_path, "r", encoding="utf-8") as f:
                 source = f.read()
             tree = ast.parse(source)
-            
+
             function_defs = {}
             integ_assigns = {}
             for node in ast.walk(tree):
@@ -134,7 +137,9 @@ class VectorModelCompiler:
                 if node:
                     deps = set()
                     for subnode in ast.walk(node):
-                        if isinstance(subnode, ast.Call) and isinstance(subnode.func, ast.Name):
+                        if isinstance(subnode, ast.Call) and isinstance(
+                            subnode.func, ast.Name
+                        ):
                             func_id = subnode.func.id
                             if func_id in self.auxiliaries:
                                 deps.add(func_id)
@@ -191,59 +196,65 @@ class VectorModelCompiler:
                     code_lines.append(f"    {var_name} = 0.0")
                 deriv_vars.append(var_name)
 
-            code_lines.append(f"    return np.array([{', '.join(deriv_vars)}], dtype=np.float64)")
+            code_lines.append(
+                f"    return np.array([{', '.join(deriv_vars)}], dtype=np.float64)"
+            )
             code_lines.append("")
 
             # Main integration function
-            code_lines.extend([
-                "def simulate_fn(initial_state, params, dt, total_steps, record_interval):",
-                "    num_recorded = int(total_steps / record_interval) + 1",
-                "    trajectory = np.zeros((num_recorded, len(initial_state)), dtype=np.float64)",
-                "    times = np.zeros(num_recorded, dtype=np.float64)",
-                "",
-                "    S = initial_state.copy()",
-                "    trajectory[0] = S",
-                "    times[0] = 0.0",
-                "",
-                "    rec_idx = 1",
-                "    for step in range(1, total_steps + 1):",
-                "        time_val = step * dt",
-                "        dS = derivative_fn(S, params, time_val)",
-                "        S = S + dS * dt",
-                "",
-                "        if step % record_interval == 0:",
-                "            if rec_idx < num_recorded:",
-                "                trajectory[rec_idx] = S",
-                "                times[rec_idx] = time_val",
-                "                rec_idx += 1",
-                "",
-                "    return times, trajectory"
-            ])
+            code_lines.extend(
+                [
+                    "def simulate_fn(initial_state, params, dt, total_steps, record_interval):",
+                    "    num_recorded = int(total_steps / record_interval) + 1",
+                    "    trajectory = np.zeros((num_recorded, len(initial_state)), dtype=np.float64)",
+                    "    times = np.zeros(num_recorded, dtype=np.float64)",
+                    "",
+                    "    S = initial_state.copy()",
+                    "    trajectory[0] = S",
+                    "    times[0] = 0.0",
+                    "",
+                    "    rec_idx = 1",
+                    "    for step in range(1, total_steps + 1):",
+                    "        time_val = step * dt",
+                    "        dS = derivative_fn(S, params, time_val)",
+                    "        S = S + dS * dt",
+                    "",
+                    "        if step % record_interval == 0:",
+                    "            if rec_idx < num_recorded:",
+                    "                trajectory[rec_idx] = S",
+                    "                times[rec_idx] = time_val",
+                    "                rec_idx += 1",
+                    "",
+                    "    return times, trajectory",
+                ]
+            )
 
             # Trajectory Evaluator for auxiliary downsampling
             eval_lines = ["def evaluate_vars_fn(trajectory, params, times):"]
             eval_lines.append("    n_steps = len(times)")
-            
+
             for col_py in self.constants + self.auxiliaries:
-                eval_lines.append(f"    arr_{col_py} = np.zeros(n_steps, dtype=np.float64)")
-                
+                eval_lines.append(
+                    f"    arr_{col_py} = np.zeros(n_steps, dtype=np.float64)"
+                )
+
             eval_lines.append("    for i in range(n_steps):")
             eval_lines.append("        time = times[i]")
             for stock_name, idx in self.stock_map.items():
                 eval_lines.append(f"        {stock_name} = trajectory[i, {idx}]")
             for param_name, idx in self.param_map.items():
                 eval_lines.append(f"        {param_name} = params[{idx}]")
-                
+
             for name in sorted_aux:
                 expr = aux_equations.get(name)
                 if expr is not None:
                     eval_lines.append(f"        {name} = {expr}")
                 else:
                     eval_lines.append(f"        {name} = 0.0")
-                    
+
             for col_py in self.constants + self.auxiliaries:
                 eval_lines.append(f"        arr_{col_py}[i] = {col_py}")
-                
+
             ret_vars = [f"arr_{col_py}" for col_py in self.constants + self.auxiliaries]
             eval_lines.append(f"    return ({', '.join(ret_vars)})")
 
@@ -261,7 +272,7 @@ class VectorModelCompiler:
             # Stock initials functions
             self._stock_initial_fns = {}
             for stock_name, expr in stock_initials.items():
-                func_code = f"def init_fn(params):\n"
+                func_code = "def init_fn(params):\n"
                 for param_name, idx in self.param_map.items():
                     func_code += f"    {param_name} = params[{idx}]\n"
                 func_code += f"    return {expr}"
@@ -269,7 +280,9 @@ class VectorModelCompiler:
                 exec(func_code, init_ns)
                 self._stock_initial_fns[stock_name] = init_ns["init_fn"]
 
-            logger.info("Successfully compiled model using Pure Python Vectorised Compiler.")
+            logger.info(
+                "Successfully compiled model using Pure Python Vectorised Compiler."
+            )
             return self
 
         except Exception as e:
@@ -285,7 +298,9 @@ class VectorModelCompiler:
     ) -> dict[str, list[float]]:
         """Executes simulation with extreme NumPy vectorized speed."""
         if self._simulate_fn is None:
-            raise VectorCompilationError("Compiler must be compiled before simulate is called.")
+            raise VectorCompilationError(
+                "Compiler must be compiled before simulate is called."
+            )
 
         overrides = {}
         if parameter_overrides:
@@ -316,11 +331,15 @@ class VectorModelCompiler:
                 initial_state_arr[idx] = float(overrides[name])
             else:
                 try:
-                    initial_state_arr[idx] = float(self._stock_initial_fns[name](params_arr))
+                    initial_state_arr[idx] = float(
+                        self._stock_initial_fns[name](params_arr)
+                    )
                 except Exception:
                     row = self.doc[self.doc["Py Name"] == name]
                     if not row.empty:
-                        initial_state_arr[idx] = float(row.iloc[0]["Initial Value"] or 0.0)
+                        initial_state_arr[idx] = float(
+                            row.iloc[0]["Initial Value"] or 0.0
+                        )
                     else:
                         initial_state_arr[idx] = 0.0
 
@@ -346,11 +365,15 @@ class VectorModelCompiler:
 
         # Assemble output series
         result_series = {"time": times.tolist()}
-        
+
         # Populate stocks
         for stock_name, idx in self.stock_map.items():
             real_name = self.pyname_to_realname.get(stock_name, stock_name)
-            if return_columns is None or real_name in return_columns or stock_name in return_columns:
+            if (
+                return_columns is None
+                or real_name in return_columns
+                or stock_name in return_columns
+            ):
                 result_series[real_name] = trajectory[:, idx].tolist()
 
         # Evaluate and populate constants and auxiliaries
@@ -358,7 +381,11 @@ class VectorModelCompiler:
         all_other_vars = self.constants + self.auxiliaries
         for idx_var, col_py in enumerate(all_other_vars):
             real_name = self.pyname_to_realname.get(col_py, col_py)
-            if return_columns is None or real_name in return_columns or col_py in return_columns:
+            if (
+                return_columns is None
+                or real_name in return_columns
+                or col_py in return_columns
+            ):
                 result_series[real_name] = evaluated_arrays[idx_var].tolist()
 
         return result_series

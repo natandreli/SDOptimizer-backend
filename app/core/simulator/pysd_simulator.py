@@ -25,7 +25,7 @@ class PySDSimulator:
         # Determine output recording interval (target around 5000 points max for smooth chart rendering and zero JSON overhead)
         total_time = self.config.total_time
         dt = self.config.dt
-        
+
         if dt > 0 and total_time / dt > 1000:
             steps_per_output = max(1, round((total_time / 1000) / dt))
             output_step = steps_per_output * dt
@@ -75,7 +75,7 @@ class PySDSimulator:
                 params=params if params else None,
                 return_columns=self.config.return_columns,
                 return_timestamps=return_timestamps,
-                **run_kwargs
+                **run_kwargs,
             )
         finally:
             if original_time_step_func is not None:

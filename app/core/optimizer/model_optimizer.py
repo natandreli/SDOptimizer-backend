@@ -101,7 +101,9 @@ class ModelOptimizer:
                 self.agent.update(action, reward)
 
             if (i + 1) % 50 == 0 or i == 0:
-                print(f"DEBUG: Optimizer progress: {i+1}/{self.max_runs} runs completed. Best score: {best_score:.4f}")
+                print(
+                    f"DEBUG: Optimizer progress: {i + 1}/{self.max_runs} runs completed. Best score: {best_score:.4f}"
+                )
 
             self.history["rewards"].append(reward)
             self.history["best_rewards"].append(best_score)

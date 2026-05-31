@@ -1,6 +1,6 @@
-from typing import Dict, List, Literal, Tuple, Optional
+from typing import Annotated, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
 
 class OptimizationConfigSchema(BaseModel):
@@ -11,6 +11,7 @@ class OptimizationConfigSchema(BaseModel):
     rho_factors: List[float]
     epsilon: float
     max_runs: int
+    optimization_count: Annotated[StrictInt, Field(ge=1, le=100)] = 1
 
     target_variable: str
     statistic: Literal["final", "mean", "max", "min"]
@@ -68,6 +69,8 @@ class OptimizationConfigSummarySchema(BaseModel):
 
 
 class OptimizationResultSchema(BaseModel):
+    optimization_number: int = 1
+    execution_time_ms: float = 0.0
     best_parameters: Dict[str, float]
     best_score: float
     history: OptimizationHistorySchema

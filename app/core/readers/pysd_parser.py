@@ -82,8 +82,8 @@ class PySDParser:
             pass
 
     def run(
-        self, 
-        overrides: Optional[Dict[str, float]] = None, 
+        self,
+        overrides: Optional[Dict[str, float]] = None,
         return_columns: Optional[List[str]] = None,
         dt: Optional[float] = None,
         total_time: Optional[float] = None,
@@ -113,13 +113,15 @@ class PySDParser:
             for name, value in overrides.items():
                 if not np.isfinite(value):
                     raise ValueError(f"'{name}' has invalid value: {value}")
-                
+
                 pysd_name = self.params_map.get(name, name.replace(" ", "_"))
-                
+
                 # Check if this name refers to a stateful variable (stock)
                 if name in self.stateful_vars or pysd_name in self.stateful_vars:
                     # Map to the proper Py Name for PySD to accept it
-                    key = self.stateful_vars.get(name, self.stateful_vars.get(pysd_name, pysd_name))
+                    key = self.stateful_vars.get(
+                        name, self.stateful_vars.get(pysd_name, pysd_name)
+                    )
                     stock_overrides[key] = value
                 else:
                     params[pysd_name] = value
@@ -138,7 +140,7 @@ class PySDParser:
             # Only generate default timestamps if not already provided
             if "return_timestamps" not in full_kwargs:
                 full_kwargs["return_timestamps"] = np.arange(0, total_time + dt, dt)
-        
+
         if return_columns is not None:
             full_kwargs["return_columns"] = return_columns
 
